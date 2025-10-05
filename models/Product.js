@@ -13,6 +13,19 @@ const productSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  category: {
+    type: String,
+    required: true,
+  },
+  stock: {
+    type: Number,
+    default: 0,
+  },
+  status: {
+    type: String,
+    enum: ['available', 'out_of_stock', 'discontinued'],
+    default: 'available',
+  },
   image: {
     type: String,
   },
@@ -21,7 +34,23 @@ const productSchema = new mongoose.Schema({
     ref: 'Provider',
     required: true,
   },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true
 });
+
+// Index for better performance
+productSchema.index({ name: 1 });
+productSchema.index({ category: 1 });
+productSchema.index({ status: 1 });
+productSchema.index({ provider: 1 });
 
 const Product = mongoose.model('Product', productSchema);
 module.exports = Product;

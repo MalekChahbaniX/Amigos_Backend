@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const OTP = require('../models/OTP');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const WASenderService = require('../services/WASenderService');
 
 // Fonction pour générer un JWT
@@ -300,9 +301,174 @@ exports.registerUser = async (req, res) => {
   } catch (error) {
     console.error('=== ERREUR REGISTER ===');
     console.error('Erreur complète:', error);
-    res.status(500).json({ 
-      message: 'Erreur serveur', 
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    res.status(500).json({
+      message: 'Erreur serveur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Enregistrer un nouvel administrateur super
+// @route   POST /api/auth/register-super-admin
+// @access  Public (mais devrait être sécurisé en production)
+exports.registerSuperAdmin = async (req, res) => {
+  const { email, password, firstName, lastName } = req.body;
+
+  try {
+    console.log('=== DEBUT REGISTER SUPER ADMIN ===');
+    console.log('Création super admin pour:', email);
+
+    // Validation des paramètres requis
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email et mot de passe sont requis pour le super admin'
+      });
+    }
+
+    // Validation du format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Format d\'email invalide' });
+    }
+
+    // Validation de la longueur du mot de passe
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
+    // Vérifier si un super admin existe déjà
+    const existingSuperAdmin = await User.findOne({ role: 'superAdmin' });
+    if (existingSuperAdmin) {
+      return res.status(400).json({
+        message: 'Un super administrateur existe déjà'
+      });
+    }
+
+    // Vérifier si l'email existe déjà
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Un compte existe déjà avec cet email' });
+    }
+
+    // Hasher le mot de passe
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    console.log('Mot de passe hashé avec succès');
+
+    // Créer le super administrateur
+    const superAdmin = await User.create({
+      email,
+      password: hashedPassword,
+      firstName: firstName || '',
+      lastName: lastName || '',
+      role: 'superAdmin',
+      isVerified: true, // Le super admin est automatiquement vérifié
+      status: 'active'
+    });
+
+    console.log('Super administrateur créé:', superAdmin._id);
+
+    if (superAdmin) {
+      res.status(201).json({
+        _id: superAdmin._id,
+        firstName: superAdmin.firstName,
+        lastName: superAdmin.lastName,
+        email: superAdmin.email,
+        role: superAdmin.role,
+        isVerified: superAdmin.isVerified,
+        token: generateToken(superAdmin._id),
+        message: 'Super administrateur créé avec succès'
+      });
+    } else {
+      res.status(400).json({ message: 'Données super administrateur invalides' });
+    }
+  } catch (error) {
+    console.error('=== ERREUR REGISTER SUPER ADMIN ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la création du super administrateur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Connecter un administrateur super
+// @route   POST /api/auth/login-super-admin
+// @access  Public
+exports.loginSuperAdmin = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    console.log('=== DEBUT LOGIN SUPER ADMIN ===');
+    console.log('Tentative de connexion super admin pour:', email);
+
+    // Validation des paramètres
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email et mot de passe sont requis'
+      });
+    }
+
+    // Validation du format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Format d\'email invalide' });
+    }
+
+    // Rechercher l'utilisateur super admin par email
+    const superAdmin = await User.findOne({
+      email: email.toLowerCase(),
+      role: 'superAdmin'
+    });
+
+    if (!superAdmin) {
+      console.log('Super admin non trouvé pour:', email);
+      return res.status(401).json({
+        message: 'Identifiants invalides pour le super administrateur'
+      });
+    }
+
+    console.log('Super admin trouvé:', superAdmin._id);
+
+    // Vérifier le mot de passe
+    const isPasswordValid = await bcrypt.compare(password, superAdmin.password);
+
+    if (!isPasswordValid) {
+      console.log('Mot de passe invalide pour:', email);
+      return res.status(401).json({
+        message: 'Identifiants invalides pour le super administrateur'
+      });
+    }
+
+    // Vérifier le statut du compte
+    if (superAdmin.status !== 'active') {
+      console.log('Compte super admin inactif:', superAdmin.status);
+      return res.status(401).json({
+        message: 'Compte super administrateur désactivé'
+      });
+    }
+
+    console.log('Connexion super admin réussie pour:', email);
+
+    res.status(200).json({
+      _id: superAdmin._id,
+      firstName: superAdmin.firstName,
+      lastName: superAdmin.lastName,
+      email: superAdmin.email,
+      role: superAdmin.role,
+      isVerified: superAdmin.isVerified,
+      token: generateToken(superAdmin._id),
+      message: 'Connexion super administrateur réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR LOGIN SUPER ADMIN ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la connexion du super administrateur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

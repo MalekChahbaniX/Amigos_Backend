@@ -10,15 +10,29 @@ const providerSchema = new mongoose.Schema({
     enum: ['restaurant', 'pharmacy', 'grocery'],
     required: true,
   },
+  phone: {
+    type: String,
+    required: true,
+  },
+  address: {
+    type: String,
+    required: true,
+  },
+  email: {
+    type: String,
+    lowercase: true,
+  },
+  description: {
+    type: String,
+  },
   location: {
     latitude: {
       type: Number,
-      required: true,
     },
     longitude: {
       type: Number,
-      required: true,
     },
+    address: String
   },
   image: {
     type: String,
@@ -26,8 +40,27 @@ const providerSchema = new mongoose.Schema({
   timeEstimate: {
     type: String,
   },
-  // Le menu sera lié via le champ 'provider' dans le modèle Product
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active',
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true
 });
+
+// Index for better performance
+providerSchema.index({ name: 1 });
+providerSchema.index({ type: 1 });
+providerSchema.index({ status: 1 });
 
 const Provider = mongoose.model('Provider', providerSchema);
 module.exports = Provider;

@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 
@@ -20,6 +21,36 @@ connectDB();
 
 const app = express();
 
+// Configuration CORS pour permettre les requêtes du frontend
+const corsOptions = {
+  origin: [
+    'http://localhost:5173',  // Vite dev server
+    'http://localhost:3000',  // Alternative port
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:3000'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
+};
+
+app.use(cors(corsOptions));
+
+// Additional headers for CORS preflight
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 // Middleware pour parser le corps des requêtes en JSON
 app.use(express.json());
 
@@ -27,13 +58,25 @@ app.use(express.json());
 const authRoutes = require('./routes/authRoutes');
 const providerRoutes = require('./routes/providerRoutes');
 const orderRoutes = require('./routes/orderRoutes');
-const transactionRoutes = require('./routes/transactionRoutes'); // <-- AJOUTEZ CETTE LIGNE
+const transactionRoutes = require('./routes/transactionRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
+const clientsRoutes = require('./routes/clientsRoutes');
+const deliverersRoutes = require('./routes/deliverersRoutes');
+const productsRoutes = require('./routes/productsRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/providers', providerRoutes);
 app.use('/api/search', providerRoutes);
 app.use('/api/orders', orderRoutes);
-app.use('/api/transactions', transactionRoutes); // <-- AJOUTEZ CETTE LIGNE
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/clients', clientsRoutes);
+app.use('/api/deliverers', deliverersRoutes);
+app.use('/api/products', productsRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Route de base pour tester que le serveur fonctionne
 app.get('/', (req, res) => {
