@@ -27,7 +27,8 @@ const corsOptions = {
     'http://localhost:5173',  // Vite dev server
     'http://localhost:3000',  // Alternative port
     'http://127.0.0.1:5173',
-    'http://127.0.0.1:3000'
+    'http://127.0.0.1:3000',
+    'https://amigos-dashboard-rrnj.onrender.com'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
