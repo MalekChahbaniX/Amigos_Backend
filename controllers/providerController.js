@@ -241,7 +241,6 @@ exports.search = async (req, res) => {
 // Type labels for frontend display
 const typeLabels = {
   restaurant: 'Restaurant',
-  grocery: 'Supermarché',
-  pharmacy: 'Pharmacie',
-  course: 'Cours'
+  course: 'Supermarché',
+  pharmacy: 'Pharmacie'
 };
