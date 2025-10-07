@@ -242,5 +242,6 @@ exports.search = async (req, res) => {
 const typeLabels = {
   restaurant: 'Restaurant',
   grocery: 'Supermarché',
-  pharmacy: 'Pharmacie'
+  pharmacy: 'Pharmacie',
+  course: 'Cours'
 };

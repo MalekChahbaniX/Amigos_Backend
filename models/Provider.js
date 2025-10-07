@@ -7,7 +7,7 @@ const providerSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['restaurant', 'pharmacy', 'grocery'],
+    enum: ['restaurant', 'pharmacy', 'course'],
     required: true,
   },
   phone: {
