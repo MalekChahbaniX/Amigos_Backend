@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
-const User = require('../models/User'); // Pour le livreur
-const Provider = require('../models/Provider'); // Pour le fournisseur
+const Provider = require('../models/Provider');
+const Promo = require('../models/Promo');
+const AppSetting = require('../models/AppSetting');
 
 // @desc    Create a new order
 // @route   POST /api/orders
@@ -9,19 +10,62 @@ exports.createOrder = async (req, res) => {
   const { client, provider, items, deliveryAddress, paymentMethod, totalAmount } = req.body;
 
   try {
+    // 🧠 1. Charger paramètres globaux
+    const appSetting = await AppSetting.findOne() || { appFee: 1.0 };
+
+    // 🧠 2. Charger provider (pour connaître son type : restaurant, course, etc.)
+    const providerData = await Provider.findById(provider);
+    if (!providerData) {
+      return res.status(404).json({ message: 'Provider not found' });
+    }
+
+    // 🧠 3. Vérifier promo active applicable
+    const promo = await Promo.findOne({ status: 'active' });
+
+    let finalAmount = totalAmount;
+    let appliedPromo = null;
+
+    if (
+      promo &&
+      promo.targetServices.includes(providerData.type) &&
+      promo.ordersUsed < promo.maxOrders &&
+      totalAmount <= promo.maxAmount
+    ) {
+      // ✅ Promo applicable
+      const appliedAppFee = promo.overrideAppFee ?? appSetting.appFee;
+      finalAmount = appliedAppFee; // le client paie juste les frais app
+      appliedPromo = promo;
+
+      // Incrémenter le compteur promo
+      promo.ordersUsed += 1;
+      await promo.save();
+    } else {
+      // ❌ Pas de promo → montant normal + frais app
+      finalAmount = totalAmount + appSetting.appFee;
+    }
+
+    // 🧠 4. Créer la commande
     const order = await Order.create({
       client,
       provider,
       items,
       deliveryAddress,
       paymentMethod,
-      totalAmount,
+      totalAmount: finalAmount,
+      promo: appliedPromo?._id || null,
     });
-    res.status(201).json(order);
+
+    res.status(201).json({
+      message: appliedPromo
+        ? `Promo "${appliedPromo.name}" appliquée !`
+        : 'Commande créée sans promo',
+      order,
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
 
 // @desc    Get order history for a client
 // @route   GET /api/orders/user/:id
@@ -108,3 +152,70 @@ exports.updateOrderStatus = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// @desc    Get summary of all orders (stats globales)
+// @route   GET /api/orders/summary
+// @access  Private (superAdmin)
+exports.getOrdersSummary = async (req, res) => {
+  try {
+    // 1️⃣ Récupérer toutes les commandes
+    const orders = await Order.find().populate('promo');
+
+    // 2️⃣ Calculs
+    const totalOrders = orders.length;
+    const promoOrders = orders.filter(o => o.promo).length;
+    const noPromoOrders = totalOrders - promoOrders;
+
+    const totalRevenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
+    const promoRevenue = orders
+      .filter(o => o.promo)
+      .reduce((sum, o) => sum + o.totalAmount, 0);
+    const normalRevenue = totalRevenue - promoRevenue;
+
+    // 3️⃣ Détails par promo
+    const promoStats = {};
+    for (const order of orders) {
+      if (order.promo) {
+        const promoName = order.promo.name;
+        if (!promoStats[promoName]) {
+          promoStats[promoName] = { count: 0, total: 0 };
+        }
+        promoStats[promoName].count += 1;
+        promoStats[promoName].total += order.totalAmount;
+      }
+    }
+
+    // 4️⃣ Calcul des revenus via appFee
+    const appFeeRevenue = await calculateAppFeeRevenue(orders);
+
+    res.json({
+      totalOrders,
+      promoOrders,
+      noPromoOrders,
+      totalRevenue: totalRevenue.toFixed(2),
+      promoRevenue: promoRevenue.toFixed(2),
+      normalRevenue: normalRevenue.toFixed(2),
+      appFeeRevenue: appFeeRevenue.toFixed(2),
+      promoStats,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// Fonction utilitaire interne
+async function calculateAppFeeRevenue(orders) {
+  let totalAppFee = 0;
+
+  for (const order of orders) {
+    if (order.promo && order.promo.overrideAppFee != null) {
+      totalAppFee += order.promo.overrideAppFee;
+    } else {
+      // Charger appFee global une seule fois si besoin
+      const { default: AppSetting } = await import('../models/AppSetting.js');
+      const globalSetting = await AppSetting.findOne() || { appFee: 1.0 };
+      totalAppFee += globalSetting.appFee;
+    }
+  }
+  return totalAppFee;
+}

@@ -29,11 +29,20 @@ const productSchema = new mongoose.Schema({
   image: {
     type: String,
   },
+    // 🧩 Le provider est maintenant optionnel
   provider: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Provider',
-    required: true,
+    required: false,
   },
+
+  // 🧩 Nouveau : possibilité d’associer une promo
+  promo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Promo',
+    required: false,
+  },
+
   createdAt: {
     type: Date,
     default: Date.now
@@ -51,6 +60,7 @@ productSchema.index({ name: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
 productSchema.index({ provider: 1 });
+productSchema.index({ promo: 1 });
 
 const Product = mongoose.model('Product', productSchema);
 module.exports = Product;
