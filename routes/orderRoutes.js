@@ -7,6 +7,7 @@ const {
   getAvailableOrders,
   assignOrder,
   updateOrderStatus,
+  getOrdersSummary,
 } = require('../controllers/orderController');
 
 // Routes pour les clients et les livreurs
@@ -16,5 +17,6 @@ router.get('/superadmin/:id', getOrdersBySuperAdmin);
 router.get('/superadmin/available', getAvailableOrders);
 router.put('/assign/:orderId', assignOrder);
 router.put('/:id/status', updateOrderStatus);
+router.get('/summary', getOrdersSummary);
 
 module.exports = router;

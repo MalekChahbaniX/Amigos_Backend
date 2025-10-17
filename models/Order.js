@@ -11,6 +11,10 @@ const orderSchema = new mongoose.Schema({
     ref: 'Provider',
     required: true,
   },
+  promo: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Promo',
+  },
   items: [
     {
       product: {

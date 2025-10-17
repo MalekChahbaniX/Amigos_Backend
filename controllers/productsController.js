@@ -109,37 +109,39 @@ exports.getProductById = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.createProduct = async (req, res) => {
   try {
-    const { name, description, price, category, stock, status, providerId, image } = req.body;
+    const { name, description, price, category, stock, status, providerId, promoId, image } = req.body;
 
-    // Validation
+    // ✅ Vérification minimale
     if (!name || !price || !category) {
-      return res.status(400).json({
-        message: 'Nom, prix et catégorie sont requis'
-      });
+      return res.status(400).json({ message: 'Nom, prix et catégorie sont requis' });
     }
 
-    // Validate providerId format
-    if (!providerId || !mongoose.Types.ObjectId.isValid(providerId)) {
-      console.error('Invalid providerId format:', providerId);
-      return res.status(400).json({
-        message: 'ID du prestataire invalide'
-      });
+    let provider = null;
+    if (providerId) {
+      if (!mongoose.Types.ObjectId.isValid(providerId)) {
+        return res.status(400).json({ message: 'ID du prestataire invalide' });
+      }
+
+      provider = await Provider.findById(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Prestataire non trouvé.' });
+      }
     }
 
-    // Validate provider exists and log the ID for debugging
-    console.log('Looking for provider with ID:', providerId);
-    const provider = await Provider.findById(providerId);
-    if (!provider) {
-      console.error('Provider not found with ID:', providerId);
-      console.error('Available providers:', await Provider.find({}, '_id name'));
-      return res.status(404).json({
-        message: 'Prestataire non trouvé. Veuillez d\'abord créer un prestataire.'
-      });
+    let promo = null;
+    if (promoId) {
+      const Promo = require('../models/Promo');
+      if (!mongoose.Types.ObjectId.isValid(promoId)) {
+        return res.status(400).json({ message: 'ID de promo invalide' });
+      }
+
+      promo = await Promo.findById(promoId);
+      if (!promo) {
+        return res.status(404).json({ message: 'Promo non trouvée.' });
+      }
     }
 
-    console.log('Creating product for provider:', provider.name, 'with ID:', provider._id);
-
-    // Create new product
+    // ✅ Création du produit
     const product = await Product.create({
       name,
       description,
@@ -147,51 +149,47 @@ exports.createProduct = async (req, res) => {
       category,
       stock: parseInt(stock) || 0,
       status: status || 'available',
-      provider: provider._id, // Use the actual provider object ID
-      ...(image && { image }) // Add image if provided
+      provider: provider ? provider._id : null,
+      promo: promo ? promo._id : null,
+      ...(image && { image }),
     });
 
-    console.log('Product created successfully:', product._id, 'with image:', image);
-
-    // Populate provider info for response
     await product.populate('provider', 'name type');
-
-    const formattedProduct = {
-      id: product._id.toString(),
-      name: product.name,
-      description: product.description,
-      category: product.category,
-      provider: product.provider ? product.provider.name : 'Prestataire inconnu',
-      price: product.price,
-      stock: product.stock,
-      status: product.status,
-      image: product.image
-    };
+    await product.populate('promo', 'name status');
 
     res.status(201).json({
       message: 'Produit créé avec succès',
-      product: formattedProduct
+      product: {
+        id: product._id.toString(),
+        name: product.name,
+        category: product.category,
+        provider: product.provider ? product.provider.name : null,
+        promo: product.promo ? product.promo.name : null,
+        price: product.price,
+        stock: product.stock,
+        status: product.status,
+        image: product.image,
+      },
     });
-
   } catch (error) {
     console.error('Error creating product:', error);
-    console.error('Error stack:', error.stack);
     res.status(500).json({
       message: 'Erreur lors de la création du produit',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
+
 
 // @desc    Update product
 // @route   PUT /api/products/:id
 // @access  Private (Super Admin only)
 exports.updateProduct = async (req, res) => {
   try {
-    const { name, description, price, category, stock, status, image } = req.body;
+    const { name, description, price, category, stock, status, image, providerId, promoId } = req.body;
 
     const updateData = {};
+
     if (name) updateData.name = name;
     if (description !== undefined) updateData.description = description;
     if (price) updateData.price = parseFloat(price);
@@ -200,41 +198,54 @@ exports.updateProduct = async (req, res) => {
     if (status) updateData.status = status;
     if (image !== undefined) updateData.image = image;
 
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true }
-    ).populate('provider', 'name type');
+    // 🧩 Optionnel : changement de prestataire
+    if (providerId) {
+      if (!mongoose.Types.ObjectId.isValid(providerId)) {
+        return res.status(400).json({ message: 'ID du prestataire invalide' });
+      }
+      updateData.provider = providerId;
+    } else if (providerId === null) {
+      updateData.provider = null; // retirer le prestataire
+    }
+
+    // 🧩 Optionnel : ajout ou suppression de promo
+    if (promoId) {
+      if (!mongoose.Types.ObjectId.isValid(promoId)) {
+        return res.status(400).json({ message: 'ID de promo invalide' });
+      }
+      updateData.promo = promoId;
+    } else if (promoId === null) {
+      updateData.promo = null; // retirer la promo
+    }
+
+    const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true })
+      .populate('provider', 'name type')
+      .populate('promo', 'name status');
 
     if (!product) {
       return res.status(404).json({ message: 'Produit non trouvé' });
     }
 
-    const formattedProduct = {
-      id: product._id.toString(),
-      name: product.name,
-      description: product.description,
-      category: product.category,
-      provider: product.provider ? product.provider.name : 'Prestataire inconnu',
-      price: product.price,
-      stock: product.stock,
-      status: product.status,
-      image: product.image
-    };
-
     res.status(200).json({
       message: 'Produit mis à jour avec succès',
-      product: formattedProduct
+      product: {
+        id: product._id.toString(),
+        name: product.name,
+        category: product.category,
+        provider: product.provider ? product.provider.name : null,
+        promo: product.promo ? product.promo.name : null,
+        price: product.price,
+        stock: product.stock,
+        status: product.status,
+        image: product.image,
+      },
     });
-
   } catch (error) {
     console.error('Error updating product:', error);
-    res.status(500).json({
-      message: 'Erreur lors de la mise à jour du produit',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ message: 'Erreur lors de la mise à jour du produit' });
   }
 };
+
 
 // @desc    Delete product
 // @route   DELETE /api/products/:id
