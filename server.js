@@ -67,6 +67,7 @@ const productsRoutes = require('./routes/productsRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const zoneRoutes = require("./routes/zoneRoutes.js");
+const cityRoutes = require('./routes/cityRoutes');
 const promoRoutes = require('./routes/promoRoutes');
 const promoProductRoutes = require('./routes/promoProductRoutes');
 const appSettingRoutes = require('./routes/appSettingRoutes');
@@ -86,6 +87,7 @@ app.use('/api/products', productsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use("/api/zones", zoneRoutes);
+app.use('/api/cities', cityRoutes);
 
 // Route de base pour tester que le serveur fonctionne
 app.get('/', (req, res) => {

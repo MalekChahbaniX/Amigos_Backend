@@ -17,6 +17,8 @@ const zoneSchema = new mongoose.Schema({
     required: [true, 'La distance maximale est obligatoire'],
     validate: {
       validator: function(value) {
+        // When updating, this.minDistance might not be available in the context
+        // So we need to ensure the validation works in both create and update scenarios
         return value > this.minDistance;
       },
       message: 'La distance maximale doit être supérieure à la distance minimale'

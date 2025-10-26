@@ -2,6 +2,193 @@ const Zone = require('../models/Zone');
 const City = require('../models/City');
 const { calculateDistance } = require('../utils/distanceCalculator');
 
+// 📍 Get all zones with pagination and search
+const getZones = async (req, res) => {
+  try {
+    const { search, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    let query = {};
+    if (search) {
+      query = {
+        $or: [
+          { number: { $regex: search, $options: 'i' } }
+        ]
+      };
+    }
+
+    const zones = await Zone.find(query)
+      .sort({ number: 1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await Zone.countDocuments(query);
+    const totalPages = Math.ceil(total / limitNum);
+
+    res.json({
+      zones: zones.map(zone => ({
+        id: zone._id,
+        number: zone.number,
+        minDistance: zone.minDistance,
+        maxDistance: zone.maxDistance,
+        price: zone.price,
+        createdAt: zone.createdAt,
+        updatedAt: zone.updatedAt
+      })),
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalItems: total,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 📍 Get zone by ID
+const getZoneById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const zone = await Zone.findById(id);
+
+    if (!zone) {
+      return res.status(404).json({ message: "Zone non trouvée" });
+    }
+
+    res.json({
+      id: zone._id,
+      number: zone.number,
+      minDistance: zone.minDistance,
+      maxDistance: zone.maxDistance,
+      price: zone.price,
+      createdAt: zone.createdAt,
+      updatedAt: zone.updatedAt
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🆕 Create new zone
+const createZone = async (req, res) => {
+  try {
+    const { number, minDistance, maxDistance, price } = req.body;
+
+    // Check if zone number already exists
+    const existingZone = await Zone.findOne({ number });
+    if (existingZone) {
+      return res.status(400).json({ message: "Un zone avec ce numéro existe déjà" });
+    }
+
+    const zone = new Zone({
+      number,
+      minDistance,
+      maxDistance,
+      price
+    });
+
+    const savedZone = await zone.save();
+
+    res.status(201).json({
+      message: "Zone créée avec succès",
+      zone: {
+        id: savedZone._id,
+        number: savedZone.number,
+        minDistance: savedZone.minDistance,
+        maxDistance: savedZone.maxDistance,
+        price: savedZone.price
+      }
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ✏️ Update zone
+const updateZone = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { number, minDistance, maxDistance, price } = req.body;
+
+    // Check if new zone number conflicts with existing zone
+    if (number) {
+      const existingZone = await Zone.findOne({ number, _id: { $ne: id } });
+      if (existingZone) {
+        return res.status(400).json({ message: "Un zone avec ce numéro existe déjà" });
+      }
+    }
+
+    // Manual validation for maxDistance > minDistance
+    if (minDistance !== undefined && maxDistance !== undefined) {
+      if (maxDistance <= minDistance) {
+        return res.status(400).json({ message: "La distance maximale doit être supérieure à la distance minimale" });
+      }
+    }
+
+    const zone = await Zone.findByIdAndUpdate(
+      id,
+      { number, minDistance, maxDistance, price },
+      { new: true, runValidators: true }
+    );
+
+    if (!zone) {
+      return res.status(404).json({ message: "Zone non trouvée" });
+    }
+
+    res.json({
+      message: "Zone mise à jour avec succès",
+      zone: {
+        id: zone._id,
+        number: zone.number,
+        minDistance: zone.minDistance,
+        maxDistance: zone.maxDistance,
+        price: zone.price
+      }
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🗑️ Delete zone
+const deleteZone = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the zone first to get its number
+    const zone = await Zone.findById(id);
+    if (!zone) {
+      return res.status(404).json({ message: "Zone non trouvée" });
+    }
+
+    // Check if zone is used by any city (using zone number, not ID)
+    const citiesUsingZone = await City.find({ activeZones: zone.number });
+    if (citiesUsingZone.length > 0) {
+      return res.status(400).json({
+        message: "Impossible de supprimer cette zone car elle est utilisée par des villes"
+      });
+    }
+
+    // Delete the zone
+    await Zone.findByIdAndDelete(id);
+
+    res.json({ message: "Zone supprimée avec succès" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // 📍 Déterminer la zone de l’utilisateur
 const getUserZone = async (req, res) => {
   try {
@@ -9,6 +196,10 @@ const getUserZone = async (req, res) => {
     const distance = calculateDistance(userLat, userLng, destLat, destLng);
 
     const city = await City.findById(cityId);
+    if (!city) {
+      return res.status(404).json({ message: "Ville non trouvée" });
+    }
+
     const activeZones = await Zone.find({ number: { $in: city.activeZones } });
 
     const matchedZone = activeZones.find(
@@ -37,22 +228,196 @@ const updateZonePrice = async (req, res) => {
       { price: newPrice },
       { new: true }
     );
-    res.json(zone);
+
+    if (!zone) {
+      return res.status(404).json({ message: "Zone non trouvée" });
+    }
+
+    res.json({
+      message: "Prix de la zone mis à jour avec succès",
+      zone: {
+        number: zone.number,
+        price: zone.price
+      }
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
 // 🧩 Activer/Désactiver zones d’une ville
+// 🧩 Activer/Désactiver zones d'une ville
 const updateCityZones = async (req, res) => {
   try {
-    const { cityId, activeZones } = req.body;
+    // Récupérer l'ID depuis les params d'URL au lieu du body
+    const { id } = req.params;
+    const { activeZones } = req.body;
+
+    // Valider que activeZones est fourni
+    if (!activeZones || !Array.isArray(activeZones)) {
+      return res.status(400).json({ 
+        message: "activeZones doit être un tableau" 
+      });
+    }
+
     const city = await City.findByIdAndUpdate(
-      cityId,
+      id,
       { activeZones },
       { new: true }
     );
-    res.json(city);
+
+    if (!city) {
+      return res.status(404).json({ message: "Ville non trouvée" });
+    }
+
+    res.json({
+      message: "Zones de la ville mises à jour avec succès",
+      city: {
+        id: city._id,
+        name: city.name,
+        activeZones: city.activeZones
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ===== CITY MANAGEMENT METHODS =====
+
+// 🏙️ Get all cities
+const getCities = async (req, res) => {
+  try {
+    const cities = await City.find({})
+      .sort({ name: 1 });
+
+    res.json({
+      cities: cities.map(city => ({
+        id: city._id,
+        name: city.name,
+        activeZones: city.activeZones,
+        isActive: city.isActive,
+        createdAt: city.createdAt
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🏙️ Get city by ID
+const getCityById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const city = await City.findById(id);
+
+    if (!city) {
+      return res.status(404).json({ message: "Ville non trouvée" });
+    }
+
+    res.json({
+      id: city._id,
+      name: city.name,
+      activeZones: city.activeZones,
+      isActive: city.isActive,
+      createdAt: city.createdAt
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🆕 Create new city
+const createCity = async (req, res) => {
+  try {
+    const { name, activeZones } = req.body;
+
+    // Check if city name already exists
+    const existingCity = await City.findOne({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
+    if (existingCity) {
+      return res.status(400).json({ message: "Une ville avec ce nom existe déjà" });
+    }
+
+    const city = new City({
+      name,
+      activeZones: activeZones || []
+    });
+
+    const savedCity = await city.save();
+
+    res.status(201).json({
+      message: "Ville créée avec succès",
+      city: {
+        id: savedCity._id,
+        name: savedCity.name,
+        activeZones: savedCity.activeZones,
+        isActive: savedCity.isActive
+      }
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ✏️ Update city
+const updateCity = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, activeZones, isActive } = req.body;
+
+    // Check if new city name conflicts with existing city
+    if (name) {
+      const existingCity = await City.findOne({
+        name: { $regex: new RegExp(`^${name}$`, 'i') },
+        _id: { $ne: id }
+      });
+      if (existingCity) {
+        return res.status(400).json({ message: "Une ville avec ce nom existe déjà" });
+      }
+    }
+
+    const city = await City.findByIdAndUpdate(
+      id,
+      { name, activeZones, isActive },
+      { new: true, runValidators: true }
+    );
+
+    if (!city) {
+      return res.status(404).json({ message: "Ville non trouvée" });
+    }
+
+    res.json({
+      message: "Ville mise à jour avec succès",
+      city: {
+        id: city._id,
+        name: city.name,
+        activeZones: city.activeZones,
+        isActive: city.isActive
+      }
+    });
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ message: err.message });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 🗑️ Delete city
+const deleteCity = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const city = await City.findByIdAndDelete(id);
+
+    if (!city) {
+      return res.status(404).json({ message: "Ville non trouvée" });
+    }
+
+    res.json({ message: "Ville supprimée avec succès" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -60,7 +425,17 @@ const updateCityZones = async (req, res) => {
 module.exports = {
   getUserZone,
   updateZonePrice,
-  updateCityZones
+  updateCityZones,
+  getZones,
+  deleteCity,
+  createCity,
+  getCityById,
+  getCities,
+  updateCity,
+  deleteZone,
+  updateZone,
+  createZone,
+  getZoneById
 };
 
 

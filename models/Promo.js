@@ -19,7 +19,7 @@ const promoSchema = new mongoose.Schema({
   ],
   maxOrders: {
     type: Number,
-    default: 50, // ex: 50 premières commandes
+    default: 50,
   },
   ordersUsed: {
     type: Number,
@@ -27,11 +27,11 @@ const promoSchema = new mongoose.Schema({
   },
   maxAmount: {
     type: Number,
-    default: 10, // commande ≤ 10 dt
+    default: 10,
   },
   deliveryOnly: {
     type: Boolean,
-    default: true, // le client paie seulement la livraison
+    default: true,
   },
   startDate: {
     type: Date,
@@ -44,6 +44,9 @@ const promoSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+}, {
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
 promoSchema.virtual('isActive').get(function () {
