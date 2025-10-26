@@ -126,9 +126,25 @@ const getAllPromos = async (req, res) => {
 
     const total = await Promo.countDocuments(query);
 
+    // Format promos with id field
+    const formattedPromos = promos.map(promo => ({
+      id: promo._id.toString(),
+      name: promo.name,
+      status: promo.status,
+      targetServices: promo.targetServices,
+      maxOrders: promo.maxOrders,
+      ordersUsed: promo.ordersUsed,
+      maxAmount: promo.maxAmount,
+      deliveryOnly: promo.deliveryOnly,
+      startDate: promo.startDate,
+      endDate: promo.endDate,
+      createdAt: promo.createdAt,
+      isActive: promo.isActive
+    }));
+
     res.status(200).json({
       success: true,
-      data: promos,
+      data: formattedPromos,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
