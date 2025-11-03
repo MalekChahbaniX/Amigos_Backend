@@ -1,61 +1,75 @@
 const mongoose = require('mongoose');
-const Provider = require('./Provider');
 
-const productSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
+const productSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    price: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+    stock: {
+      type: Number,
+      default: 0,
+    },
+    category: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    provider: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Provider',
+      required: false,
+    },
+    promo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Promo',
+      required: false,
+    },
+    image: {
+      type: String,
+    },
+    status: {
+      type: String,
+      enum: ['available', 'out_of_stock', 'discontinued'],
+      default: 'available',
+    },
+    optionGroups: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'OptionGroup',
+        required: false,
+      },
+    ],
+    sizes: [
+      {
+        name: { type: String },
+        price: { type: Number },
+        optionGroups: [
+          {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'OptionGroup',
+            required: false,
+          },
+        ],
+      },
+    ],
   },
-  description: {
-    type: String,
-  },
-  price: {
-    type: Number,
-    required: true,
-  },
-  category: {
-    type: String,
-    required: true,
-  },
-  stock: {
-    type: Number,
-    default: 0,
-  },
-  status: {
-    type: String,
-    enum: ['available', 'out_of_stock', 'discontinued'],
-    default: 'available',
-  },
-  image: {
-    type: String,
-  },
-    // 🧩 Le provider est maintenant optionnel
-  provider: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Provider',
-    required: false,
-  },
-
-  // 🧩 Nouveau : possibilité d’associer une promo
-  promo: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Promo',
-    required: false,
-  },
-
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  {
+    timestamps: true,
   }
-}, {
-  timestamps: true
-});
+);
 
-// Index for better performance
+// 🔍 Indexes pour optimiser les recherches
 productSchema.index({ name: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
