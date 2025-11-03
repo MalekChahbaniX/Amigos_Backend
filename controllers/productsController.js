@@ -28,24 +28,45 @@ exports.getProducts = async (req, res) => {
     // Get total count for pagination
     const totalProducts = await Product.countDocuments(query);
 
-    // Get products with pagination and populate provider info
+    // Get products with pagination and populate provider info and optionGroups
     const products = await Product.find(query)
       .populate('provider', 'name type')
+      .populate({
+        path: 'optionGroups',
+        populate: {
+          path: 'options.option',
+          model: 'ProductOption'
+        }
+      })
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
 
     // Format products data for frontend
-    const formattedProducts = products.map(product => ({
-      id: product._id.toString(),
-      name: product.name,
-      category: product.category,
-      provider: product.provider ? product.provider.name : 'Prestataire inconnu',
-      price: product.price,
-      stock: product.stock || 0,
-      status: product.status,
-      image: product.image
-    }));
+    const formattedProducts = products.map(product => {
+      // Convert optionGroups to the expected options format
+      const options = product.optionGroups ? product.optionGroups.map(group => ({
+        name: group.name,
+        required: false, // Default to optional, can be made configurable later
+        maxSelections: 1, // Default to 1, can be made configurable later
+        subOptions: group.options ? group.options.map(opt => ({
+          name: opt.name || opt.option?.name,
+          price: opt.price || opt.option?.price || 0
+        })) : []
+      })) : [];
+
+      return {
+        id: product._id.toString(),
+        name: product.name,
+        category: product.category,
+        provider: product.provider ? product.provider.name : 'Prestataire inconnu',
+        price: product.price,
+        stock: product.stock || 0,
+        status: product.status,
+        image: product.image,
+        options: options
+      };
+    });
 
     // Add cache-busting headers
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -81,6 +102,17 @@ exports.getProductById = async (req, res) => {
       return res.status(404).json({ message: 'Produit non trouvé' });
     }
 
+    // Convert optionGroups to the expected options format
+    const options = product.optionGroups ? product.optionGroups.map(group => ({
+      name: group.name,
+      required: false, // Default to optional, can be made configurable later
+      maxSelections: 1, // Default to 1, can be made configurable later
+      subOptions: group.options ? group.options.map(opt => ({
+        name: opt.name || opt.option?.name,
+        price: opt.price || opt.option?.price || 0
+      })) : []
+    })) : [];
+
     const formattedProduct = {
       id: product._id.toString(),
       name: product.name,
@@ -90,7 +122,8 @@ exports.getProductById = async (req, res) => {
       price: product.price,
       stock: product.stock || 0,
       status: product.status,
-      image: product.image
+      image: product.image,
+      options: options
     };
 
     res.status(200).json(formattedProduct);
@@ -109,7 +142,7 @@ exports.getProductById = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.createProduct = async (req, res) => {
   try {
-    const { name, description, price, category, stock, status, providerId, promoId, image } = req.body;
+    const { name, description, price, category, stock, status, providerId, promoId, image, options } = req.body;
 
     // ✅ Vérification minimale
     if (!name || !price || !category) {
@@ -154,8 +187,64 @@ exports.createProduct = async (req, res) => {
       ...(image && { image }),
     });
 
+    // ✅ Créer les groupes d'options si fournis
+    if (options && Array.isArray(options) && options.length > 0) {
+      const OptionGroup = require('../models/OptionGroup');
+      const ProductOption = require('../models/ProductOption');
+
+      for (const optionGroup of options) {
+        // Créer le groupe d'options
+        const group = await OptionGroup.create({
+          name: optionGroup.name,
+          description: optionGroup.name, // Utiliser le nom comme description
+          storeId: provider ? provider._id : null,
+        });
+
+        // Créer les options du groupe
+        if (optionGroup.subOptions && Array.isArray(optionGroup.subOptions)) {
+          for (const subOption of optionGroup.subOptions) {
+            const option = await ProductOption.create({
+              name: subOption.name,
+              price: subOption.price || 0,
+              storeId: provider ? provider._id : null,
+            });
+
+            // Ajouter l'option au groupe
+            group.options.push({
+              option: option._id,
+              name: subOption.name,
+              price: subOption.price || 0,
+            });
+          }
+          await group.save();
+        }
+
+        // Lier le groupe au produit
+        product.optionGroups.push(group._id);
+      }
+      await product.save();
+    }
+
     await product.populate('provider', 'name type');
     await product.populate('promo', 'name status');
+    await product.populate({
+      path: 'optionGroups',
+      populate: {
+        path: 'options.option',
+        model: 'ProductOption'
+      }
+    });
+
+    // Convert optionGroups to the expected options format for response
+    const formattedOptions = product.optionGroups ? product.optionGroups.map(group => ({
+      name: group.name,
+      required: false, // Default to optional
+      maxSelections: 1, // Default to 1
+      subOptions: group.options ? group.options.map(opt => ({
+        name: opt.name || opt.option?.name,
+        price: opt.price || opt.option?.price || 0
+      })) : []
+    })) : [];
 
     res.status(201).json({
       message: 'Produit créé avec succès',
@@ -169,6 +258,7 @@ exports.createProduct = async (req, res) => {
         stock: product.stock,
         status: product.status,
         image: product.image,
+        options: formattedOptions,
       },
     });
   } catch (error) {
@@ -276,7 +366,14 @@ exports.deleteProduct = async (req, res) => {
 // @access  Public
 exports.getProductsByProvider = async (req, res) => {
   try {
-    const products = await Product.find({ provider: req.params.providerId })
+    const { providerId } = req.params;
+
+    // Validate and convert providerId to ObjectId
+    if (!mongoose.Types.ObjectId.isValid(providerId)) {
+      return res.status(400).json({ message: 'ID du prestataire invalide' });
+    }
+
+    const products = await Product.find({ provider: new mongoose.Types.ObjectId(providerId) })
       .sort({ createdAt: -1 });
 
     const formattedProducts = products.map(product => ({
