@@ -73,6 +73,7 @@ const promoProductRoutes = require('./routes/promoProductRoutes');
 const appSettingRoutes = require('./routes/appSettingRoutes');
 const optionGroupRoutes = require('./routes/optionGroupRoutes');
 const productOptionRoutes = require('./routes/productOptionRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 app.use('/api/app-settings', appSettingRoutes);
 app.use('/api/promos', promoRoutes);
@@ -92,6 +93,7 @@ app.use("/api/zones", zoneRoutes);
 app.use('/api/cities', cityRoutes);
 app.use('/api/option-groups', optionGroupRoutes);
 app.use('/api/product-options', productOptionRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Route de base pour tester que le serveur fonctionne
 app.get('/', (req, res) => {
