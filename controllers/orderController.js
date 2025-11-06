@@ -72,10 +72,23 @@ exports.createOrder = async (req, res) => {
 // @access  Private (client)
 exports.getOrdersByClient = async (req, res) => {
   try {
-    const orders = await Order.find({ client: req.params.id }).sort({ createdAt: -1 });
-    res.json(orders);
+    const orders = await Order.find({ client: req.params.id })
+      .populate('provider', 'name') // Populate provider name
+      .sort({ createdAt: -1 });
+    
+    // Format the response to match frontend expectations
+    const formattedOrders = orders.map(order => ({
+      ...order.toObject(),
+      provider: order.provider?.name || 'Restaurant', // fallback name
+      deliveryAddress: order.deliveryAddress
+        ? `${order.deliveryAddress.street || ''}, ${order.deliveryAddress.city || ''}`.replace(/, $/, '')
+        : 'Adresse de livraison'
+    }));
+    
+    res.json(formattedOrders);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error in getOrdersByClient:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
