@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
+const path = require('path');
 
 // Charger les variables d'environnement
 dotenv.config();
@@ -41,7 +42,7 @@ app.use(cors(corsOptions));
 // Additional headers for CORS preflight
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.header('Access-Control-Allow-Credentials', 'true');
 
   // Handle preflight requests
@@ -54,6 +55,9 @@ app.use((req, res, next) => {
 
 // Middleware pour parser le corps des requêtes en JSON
 app.use(express.json());
+
+// Middleware pour servir les fichiers statiques (uploads)
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -74,6 +78,7 @@ const appSettingRoutes = require('./routes/appSettingRoutes');
 const optionGroupRoutes = require('./routes/optionGroupRoutes');
 const productOptionRoutes = require('./routes/productOptionRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 
 app.use('/api/app-settings', appSettingRoutes);
 app.use('/api/promos', promoRoutes);
@@ -94,6 +99,7 @@ app.use('/api/cities', cityRoutes);
 app.use('/api/option-groups', optionGroupRoutes);
 app.use('/api/product-options', productOptionRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Route de base pour tester que le serveur fonctionne
 app.get('/', (req, res) => {
