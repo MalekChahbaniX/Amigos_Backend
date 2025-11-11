@@ -1,7 +1,11 @@
 import express from "express";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
-import fetch from "node-fetch";
+import twilio from "twilio";
+import dotenv from "dotenv";
+
+// Charger les variables d'environnement
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
@@ -9,7 +13,7 @@ app.use(bodyParser.json());
 // -------------------
 // 🔌 Connexion MongoDB
 // -------------------
-const MONGO_URI = "mongodb+srv://malekchb0621_db_user:amigos2025**@amigos.gyjfexc.mongodb.net/?retryWrites=true&w=majority&appName=amigos";
+const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://malekchb0621_db_user:amigos2025**@amigos.gyjfexc.mongodb.net/?retryWrites=true&w=majority&appName=amigos";
 mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
@@ -33,7 +37,18 @@ function generateOTP() {
 }
 
 // -------------------
-// 📤 Route: envoyer OTP
+// � Configuration Twilio
+// -------------------
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+const smsFrom = process.env.TWILIO_PHONE_NUMBER;
+const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM;
+
+// -------------------
+// �📤 Route: envoyer OTP
 // -------------------
 app.post("/send-otp", async (req, res) => {
   const { phone } = req.body;
@@ -44,26 +59,54 @@ app.post("/send-otp", async (req, res) => {
   try {
     // Sauvegarde dans Mongo
     await OTP.create({ phone, code: otp });
+    
+    const messageText = `🔐 Votre code de vérification AMIGOS est : ${otp}`;
+    let sendResult;
 
-    // ⚠️ Remplace par ta vraie API Key WAnotifier
-    const response = await fetch("https://app.wanotifier.com/webhooks/OiTDxouGS2NTuF8ti769", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer VOTRE_API_KEY"
-      },
-      body: JSON.stringify({
+    // Tentative WhatsApp d'abord si configuré
+    if (whatsappFrom) {
+      try {
+        console.log('Tentative envoi WhatsApp vers:', phone);
+        const waResponse = await twilioClient.messages.create({
+          from: whatsappFrom.startsWith('whatsapp:') ? whatsappFrom : `whatsapp:${whatsappFrom}`,
+          to: `whatsapp:${phone}`,
+          body: messageText
+        });
+        sendResult = { channel: 'whatsapp', success: true, data: waResponse };
+      } catch (waError) {
+        console.error('Échec WhatsApp, fallback SMS:', waError.message);
+        // Continue vers SMS
+      }
+    }
+
+    // Si pas de WhatsApp ou échec, on essaie SMS
+    if (!sendResult && smsFrom) {
+      console.log('Tentative envoi SMS vers:', phone);
+      const smsResponse = await twilioClient.messages.create({
+        from: smsFrom,
         to: phone,
-        message: `🔐 Votre code de vérification est : ${otp}`
-      })
-    });
+        body: messageText
+      });
+      sendResult = { channel: 'sms', success: true, data: smsResponse };
+    }
 
-    const data = await response.json();
-    return res.json({ success: true, otpSent: true, data });
+    if (!sendResult) {
+      throw new Error('Aucun canal de communication disponible');
+    }
+
+    return res.json({ 
+      success: true, 
+      otpSent: true, 
+      channel: sendResult.channel,
+      messageId: sendResult.data.sid 
+    });
 
   } catch (error) {
     console.error("❌ Erreur envoi OTP:", error);
-    return res.status(500).json({ error: "Erreur serveur" });
+    return res.status(500).json({ 
+      error: "Erreur serveur",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    });
   }
 });
 
