@@ -2,7 +2,7 @@ const User = require('../models/User');
 const OTP = require('../models/OTP');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const WASenderService = require('../services/WASenderService');
+const OTPService = require('../services/otpService');
 
 // Fonction pour générer un JWT
 const generateToken = (id) => {
@@ -22,13 +22,13 @@ exports.testConnection = async (req, res) => {
     // Test de la base de données
     const userCount = await User.countDocuments();
     
-    // Test de WASender
-    const wasenderTest = await WASenderService.testConnection();
+    // Test de Twilio SMS
+    const otpServiceTest = await OTPService.testConnection();
     
     res.status(200).json({ 
       message: 'Serveur connecté avec succès',
       database: { connected: true, users: userCount },
-      wasender: wasenderTest
+      twilio: otpServiceTest
     });
   } catch (error) {
     res.status(500).json({ 
@@ -108,18 +108,18 @@ exports.loginUser = async (req, res) => {
         });
         console.log('Nouveau OTP sauvegardé');
 
-        // Essayer d'envoyer l'OTP via WASender
-        let whatsappSent = false;
+        // Essayer d'envoyer l'OTP via SMS
+        let smsSent = false;
         let errorMessage = '';
 
         try {
-          await WASenderService.sendOTP(phoneNumber, otp);
-          console.log('OTP envoyé via WhatsApp avec succès');
-          whatsappSent = true;
+          const result = await OTPService.sendOTP(phoneNumber, otp);
+          console.log('OTP envoyé par SMS avec succès:', result.sid);
+          smsSent = result.success || true;
         } catch (smsError) {
-          console.error('Erreur envoi WhatsApp:', smsError.message);
+          console.error('Erreur envoi SMS:', smsError.message);
           errorMessage = smsError.message;
-          // On continue même si l'envoi WhatsApp échoue
+          // On continue même si l'envoi SMS échoue
         }
 
         // Réponse adaptée selon le succès de l'envoi
@@ -127,18 +127,23 @@ exports.loginUser = async (req, res) => {
           _id: user._id,
           phoneNumber: user.phoneNumber,
           isVerified: false,
-          otpSent: whatsappSent,
+          otpSent: smsSent,
         };
 
-        if (whatsappSent) {
-          response.message = 'Code de vérification envoyé par WhatsApp';
-        } else {
-          response.message = 'Code de vérification généré (erreur envoi WhatsApp)';
-          response.error = `Erreur WhatsApp: ${errorMessage}`;
+        if (smsSent) {
+          response.message = 'Code de vérification envoyé par SMS';
           
-          // En cas d'échec WhatsApp, on peut envoyer le code par SMS ou email
-          // Ou simplement retourner le code en mode développement
-          if (process.env.NODE_ENV === 'development') {
+          // En développement, inclure le code pour tester facilement
+          if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+            response.debugOtp = otp;
+            response.devMessage = `Code pour tester: ${otp}`;
+          }
+        } else {
+          response.message = 'Code de vérification généré (erreur envoi SMS)';
+          response.error = `Erreur SMS: ${errorMessage}`;
+          
+          // En cas d'échec SMS, retourner le code en mode développement
+          if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
             response.debugOtp = otp;
             response.message += ` - Code de debug: ${otp}`;
           }
