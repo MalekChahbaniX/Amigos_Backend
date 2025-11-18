@@ -7,7 +7,7 @@ const AppSetting = require('../models/AppSetting');
 // @route   POST /api/orders
 // @access  Private (client)
 exports.createOrder = async (req, res) => {
-  const { client, provider, items, deliveryAddress, paymentMethod, totalAmount } = req.body;
+  const { client, provider, items, deliveryAddress, paymentMethod, totalAmount, deliveryFee, subtotal, cardInfo } = req.body;
 
   try {
     // 🧠 1. Charger paramètres globaux
@@ -44,15 +44,46 @@ exports.createOrder = async (req, res) => {
       finalAmount = totalAmount + appSetting.appFee;
     }
 
-    // 🧠 4. Créer la commande
+    // 🧠 4. Traiter l'adresse de livraison
+    let formattedDeliveryAddress = {};
+    if (typeof deliveryAddress === 'string') {
+      // Convertir l'adresse string en objet
+      formattedDeliveryAddress = {
+        street: deliveryAddress,
+        city: '', // À compléter si besoin
+        zipCode: '', // À compléter si besoin
+      };
+    } else if (typeof deliveryAddress === 'object') {
+      formattedDeliveryAddress = deliveryAddress;
+    }
+
+    // 🧠 5. Traiter les items
+    const formattedItems = items.map(item => ({
+      product: item.productId || item.product || null, // Convertir productId en product
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+    }));
+
+    // 🧠 6. Convertir la méthode de paiement
+    let formattedPaymentMethod = paymentMethod;
+    if (paymentMethod === 'card') {
+      formattedPaymentMethod = 'online';
+    }
+
+    // 🧠 7. Créer la commande
     const order = await Order.create({
       client,
       provider,
-      items,
-      deliveryAddress,
-      paymentMethod,
+      items: formattedItems,
+      deliveryAddress: formattedDeliveryAddress,
+      paymentMethod: formattedPaymentMethod,
       totalAmount: finalAmount,
       promo: appliedPromo?._id || null,
+      // Champs optionnels pour la compatibilité frontend
+      deliveryFee: deliveryFee || 0,
+      subtotal: subtotal || 0,
+      cardInfo: cardInfo || undefined,
     });
 
     res.status(201).json({

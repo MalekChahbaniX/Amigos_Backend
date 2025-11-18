@@ -20,7 +20,7 @@ const orderSchema = new mongoose.Schema({
       product: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Product',
-        required: true,
+        required: false, // Make optional to handle cases where product might not exist
       },
       name: {
         type: String,
