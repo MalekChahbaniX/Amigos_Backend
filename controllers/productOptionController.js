@@ -1,33 +1,48 @@
+// controllers/productOptionController.js (IMPROVED VERSION)
 const ProductOption = require('../models/ProductOption');
 const OptionGroup = require('../models/OptionGroup');
 
-// ➕ Créer une option et l’ajouter à un groupe
+// Create product option
 exports.createProductOption = async (req, res) => {
   try {
-    const { name, price, groupId } = req.body;
+    const { name, price, groupId, storeId, image, availability, dineIn, delivery, takeaway } = req.body;
 
-    if (!name || !groupId) {
-      return res.status(400).json({ message: "Nom et groupId requis" });
+    if (!name) {
+      return res.status(400).json({ message: "Nom requis" });
     }
 
-    const group = await OptionGroup.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ message: "Groupe non trouvé" });
-    }
-
-    // Crée l’option
-    const option = await ProductOption.create({
+    const optionData = {
       name,
       price: price || 0,
-      storeId: group.storeId,
-    });
+      storeId,
+      image,
+      availability: availability !== undefined ? availability : true,
+      dineIn: dineIn !== undefined ? dineIn : true,
+      delivery: delivery !== undefined ? delivery : true,
+      takeaway: takeaway !== undefined ? takeaway : true,
+    };
 
-    // L’ajoute dans le groupe
-    group.options.push({ option: option._id, name, price: price || 0 });
-    await group.save();
+    const option = await ProductOption.create(optionData);
+
+    // If groupId provided, add to group
+    if (groupId) {
+      const group = await OptionGroup.findById(groupId);
+      if (group) {
+        group.options.push({
+          option: option._id,
+          name,
+          price: price || 0,
+          image
+        });
+        await group.save();
+
+        option.optionGroups.push(group._id);
+        await option.save();
+      }
+    }
 
     res.status(201).json({
-      message: "Option ajoutée avec succès",
+      message: "Option créée avec succès",
       option,
     });
   } catch (error) {
@@ -35,45 +50,93 @@ exports.createProductOption = async (req, res) => {
   }
 };
 
-// 📋 Liste des options
+// Get all product options
 exports.getAllProductOptions = async (req, res) => {
   try {
-    const options = await ProductOption.find().populate('optionGroups');
+    const { storeId, availability } = req.query;
+    let query = {};
+
+    if (storeId) {
+      query.storeId = storeId;
+    }
+
+    if (availability !== undefined) {
+      query.availability = availability === 'true';
+    }
+
+    const options = await ProductOption.find(query)
+      .populate('optionGroups')
+      .sort({ createdAt: -1 });
+
     res.json(options);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// 🔍 Option par ID
+// Get product option by ID
 exports.getProductOptionById = async (req, res) => {
   try {
-    const option = await ProductOption.findById(req.params.id).populate('optionGroups');
-    if (!option) return res.status(404).json({ message: 'Option not found' });
+    const option = await ProductOption.findById(req.params.id)
+      .populate('optionGroups');
+
+    if (!option) {
+      return res.status(404).json({ message: 'Option non trouvée' });
+    }
+
     res.json(option);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ✏️ Modifier une option
+// Update product option
 exports.updateProductOption = async (req, res) => {
   try {
-    const option = await ProductOption.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!option) return res.status(404).json({ message: 'Option not found' });
-    res.json(option);
+    const updateData = { ...req.body };
+
+    const option = await ProductOption.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    ).populate('optionGroups');
+
+    if (!option) {
+      return res.status(404).json({ message: 'Option non trouvée' });
+    }
+
+    // Update option in all groups
+    await OptionGroup.updateMany(
+      { 'options.option': option._id },
+      {
+        $set: {
+          'options.$[elem].name': option.name,
+          'options.$[elem].price': option.price,
+          'options.$[elem].image': option.image
+        }
+      },
+      { arrayFilters: [{ 'elem.option': option._id }] }
+    );
+
+    res.json({
+      message: 'Option mise à jour avec succès',
+      option
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// ❌ Supprimer une option
+// Delete product option
 exports.deleteProductOption = async (req, res) => {
   try {
     const option = await ProductOption.findByIdAndDelete(req.params.id);
-    if (!option) return res.status(404).json({ message: 'Option non trouvée' });
 
-    // Supprimer la référence dans tous les groupes
+    if (!option) {
+      return res.status(404).json({ message: 'Option non trouvée' });
+    }
+
+    // Remove from all groups
     await OptionGroup.updateMany(
       {},
       { $pull: { options: { option: option._id } } }

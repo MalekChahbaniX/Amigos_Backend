@@ -1,35 +1,39 @@
+// controllers/optionGroupController.js (IMPROVED VERSION)
 const OptionGroup = require('../models/OptionGroup');
 const Product = require('../models/Product');
 
-// ➕ Créer un groupe d’options lié à un produit
+// Create option group
 exports.createOptionGroup = async (req, res) => {
   try {
-    const { name, description, productId } = req.body;
+    const { name, description, min, max, productId, storeId, image } = req.body;
 
-    if (!name || !productId) {
-      return res.status(400).json({ message: "Nom et produit requis" });
+    if (!name) {
+      return res.status(400).json({ message: "Nom requis" });
     }
 
-    // Vérifie que le produit existe
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ message: "Produit non trouvé" });
-    }
-
-    // Crée le groupe
-    const group = await OptionGroup.create({
+    const groupData = {
       name,
       description,
-      storeId: product.provider, // si provider = store
-    });
+      min: min || 0,
+      max: max || 1,
+      storeId,
+      image
+    };
 
-    // L’associe au produit
-    product.optionGroups = product.optionGroups || [];
-    product.optionGroups.push(group._id);
-    await product.save();
+    const group = await OptionGroup.create(groupData);
+
+    // If productId provided, link to product
+    if (productId) {
+      const product = await Product.findById(productId);
+      if (product) {
+        product.optionGroups = product.optionGroups || [];
+        product.optionGroups.push(group._id);
+        await product.save();
+      }
+    }
 
     res.status(201).json({
-      message: "Groupe d’options créé avec succès",
+      message: "Groupe d'options créé avec succès",
       group,
     });
   } catch (error) {
@@ -37,19 +41,26 @@ exports.createOptionGroup = async (req, res) => {
   }
 };
 
-// 📋 Tous les groupes (optionnellement filtrés par produit)
+// Get all option groups
 exports.getAllOptionGroups = async (req, res) => {
   try {
-    const { product } = req.query;
+    const { product, storeId } = req.query;
     let query = {};
 
+    if (storeId) {
+      query.storeId = storeId;
+    }
+
     if (product) {
-      query = { _id: { $in: (await Product.findById(product)).optionGroups } };
+      const productDoc = await Product.findById(product);
+      if (productDoc) {
+        query = { _id: { $in: productDoc.optionGroups } };
+      }
     }
 
     const groups = await OptionGroup.find(query)
       .populate('options.option')
-      .populate('options.subOptionGroup');
+      .sort({ createdAt: -1 });
 
     res.json(groups);
   } catch (error) {
@@ -57,37 +68,63 @@ exports.getAllOptionGroups = async (req, res) => {
   }
 };
 
-// 🔍 Groupe par ID
+// Get option group by ID
 exports.getOptionGroupById = async (req, res) => {
   try {
     const group = await OptionGroup.findById(req.params.id)
-      .populate('options.option')
-      .populate('options.subOptionGroup');
-    if (!group) return res.status(404).json({ message: 'Group not found' });
+      .populate('options.option');
+
+    if (!group) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
+    }
+
     res.json(group);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ✏️ Modifier un groupe
+// Update option group
 exports.updateOptionGroup = async (req, res) => {
   try {
-    const group = await OptionGroup.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!group) return res.status(404).json({ message: 'Group not found' });
-    res.json(group);
+    const { name, description, min, max, image } = req.body;
+
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (min !== undefined) updateData.min = min;
+    if (max !== undefined) updateData.max = max;
+    if (image !== undefined) updateData.image = image;
+
+    const group = await OptionGroup.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    ).populate('options.option');
+
+    if (!group) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
+    }
+
+    res.json({
+      message: 'Groupe mis à jour avec succès',
+      group
+    });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// ❌ Supprimer un groupe
+// Delete option group
 exports.deleteOptionGroup = async (req, res) => {
   try {
     const group = await OptionGroup.findByIdAndDelete(req.params.id);
-    if (!group) return res.status(404).json({ message: 'Group not found' });
 
-    // Retirer la référence du produit
+    if (!group) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
+    }
+
+    // Remove references from products
     await Product.updateMany(
       { optionGroups: group._id },
       { $pull: { optionGroups: group._id } }
@@ -99,48 +136,53 @@ exports.deleteOptionGroup = async (req, res) => {
   }
 };
 
-// Ajouter un sous-groupe dans un groupe existant
-exports.addSubOptionGroup = async (req, res) => {
+// Add option to group
+exports.addOptionToGroup = async (req, res) => {
   try {
-    const { subGroupId } = req.body;
-    const parentId = req.params.id;
+    const { optionId, name, price, image } = req.body;
+    const groupId = req.params.id;
 
-    const parent = await OptionGroup.findById(parentId);
-    const subGroup = await OptionGroup.findById(subGroupId);
-
-    if (!parent || !subGroup) {
-      return res.status(404).json({ message: 'Groupe ou sous-groupe introuvable' });
+    const group = await OptionGroup.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
     }
 
-    // Évite les doublons
-    if (parent.options.some(o => o.subOptionGroup?.includes(subGroup._id))) {
-      return res.status(400).json({ message: 'Sous-groupe déjà associé' });
-    }
+    group.options.push({
+      option: optionId,
+      name,
+      price: price || 0,
+      image
+    });
 
-    // Ajout du sous-groupe
-    parent.options.push({ subOptionGroup: [subGroup._id] });
-    await parent.save();
+    await group.save();
+    await group.populate('options.option');
 
-    res.status(200).json({ message: 'Sous-groupe ajouté avec succès', parent });
+    res.json({
+      message: 'Option ajoutée avec succès',
+      group
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Supprimer un sous-groupe d’un groupe
-exports.removeSubOptionGroup = async (req, res) => {
+// Remove option from group
+exports.removeOptionFromGroup = async (req, res) => {
   try {
-    const { id, subId } = req.params;
+    const { groupId, optionId } = req.params;
 
-    const group = await OptionGroup.findById(id);
-    if (!group) return res.status(404).json({ message: 'Groupe introuvable' });
+    const group = await OptionGroup.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ message: 'Groupe non trouvé' });
+    }
 
     group.options = group.options.filter(
-      (opt) => !opt.subOptionGroup?.includes(subId)
+      opt => opt.option.toString() !== optionId
     );
+
     await group.save();
 
-    res.json({ message: 'Sous-groupe supprimé avec succès' });
+    res.json({ message: 'Option retirée avec succès' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

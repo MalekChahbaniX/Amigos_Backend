@@ -1,3 +1,4 @@
+// models/OptionGroup.js (IMPROVED VERSION)
 const mongoose = require('mongoose');
 
 const optionGroupSchema = new mongoose.Schema({
@@ -9,29 +10,35 @@ const optionGroupSchema = new mongoose.Schema({
   description: {
     type: String,
   },
+  min: {
+    type: Number,
+    default: 0,
+  },
+  max: {
+    type: Number,
+    default: 1,
+  },
   storeId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Provider', 
+    ref: 'Provider',
     required: false,
   },
-  options: [
-    {
-      option: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'ProductOption', 
-      },
-      name: {
-        type: String,
-      },
-      price: {
-        type: Number,
-        default: 0,
-      },
-      image: {
-        type: String,
-      },
+  options: [{
+    option: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ProductOption',
     },
-  ],
+    name: {
+      type: String,
+    },
+    price: {
+      type: Number,
+      default: 0,
+    },
+    image: {
+      type: String,
+    },
+  }],
   image: {
     type: String,
   },
@@ -43,4 +50,5 @@ optionGroupSchema.index({ name: 1 });
 optionGroupSchema.index({ storeId: 1 });
 
 const OptionGroup = mongoose.model('OptionGroup', optionGroupSchema);
+
 module.exports = OptionGroup;

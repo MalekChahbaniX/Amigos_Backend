@@ -1,3 +1,4 @@
+// models/Product.js (Updated - add these fields)
 const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema(
@@ -50,26 +51,30 @@ const productSchema = new mongoose.Schema(
         required: false,
       },
     ],
-    sizes: [
-      {
-        name: { type: String },
-        price: { type: Number },
-        optionGroups: [
-          {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'OptionGroup',
-            required: false,
-          },
-        ],
-      },
-    ],
+    // ADD THESE NEW FIELDS
+    availability: {
+      type: Boolean,
+      default: true,
+    },
+    dineIn: {
+      type: Boolean,
+      default: true,
+    },
+    delivery: {
+      type: Boolean,
+      default: true,
+    },
+    takeaway: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// 🔍 Indexes pour optimiser les recherches
+// Indexes
 productSchema.index({ name: 1 });
 productSchema.index({ category: 1 });
 productSchema.index({ status: 1 });
@@ -77,4 +82,5 @@ productSchema.index({ provider: 1 });
 productSchema.index({ promo: 1 });
 
 const Product = mongoose.model('Product', productSchema);
+
 module.exports = Product;

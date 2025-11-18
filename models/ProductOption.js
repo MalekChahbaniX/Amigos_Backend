@@ -1,3 +1,4 @@
+// models/ProductOption.js (IMPROVED VERSION)
 const mongoose = require('mongoose');
 
 const productOptionSchema = new mongoose.Schema({
@@ -19,19 +20,33 @@ const productOptionSchema = new mongoose.Schema({
   image: {
     type: String,
   },
-  optionGroups: [
-    {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'OptionGroup',
-    },
-  ],
-},
-{
-  timestamps: true, 
+  availability: {
+    type: Boolean,
+    default: true,
+  },
+  dineIn: {
+    type: Boolean,
+    default: true,
+  },
+  delivery: {
+    type: Boolean,
+    default: true,
+  },
+  takeaway: {
+    type: Boolean,
+    default: true,
+  },
+  optionGroups: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'OptionGroup',
+  }],
+}, {
+  timestamps: true,
 });
 
 productOptionSchema.index({ name: 1 });
 productOptionSchema.index({ storeId: 1 });
 
 const ProductOption = mongoose.model('ProductOption', productOptionSchema);
+
 module.exports = ProductOption;
