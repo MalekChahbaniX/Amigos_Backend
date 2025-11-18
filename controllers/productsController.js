@@ -137,206 +137,6 @@ exports.getProductById = async (req, res) => {
   }
 };
 
-// @desc    Create new product
-// @route   POST /api/products
-// @access  Private (Super Admin only)
-exports.createProduct = async (req, res) => {
-  try {
-    const { name, description, price, category, stock, status, providerId, promoId, image, options } = req.body;
-
-    // ✅ Vérification minimale
-    if (!name || !price || !category) {
-      return res.status(400).json({ message: 'Nom, prix et catégorie sont requis' });
-    }
-
-    let provider = null;
-    if (providerId) {
-      if (!mongoose.Types.ObjectId.isValid(providerId)) {
-        return res.status(400).json({ message: 'ID du prestataire invalide' });
-      }
-
-      provider = await Provider.findById(providerId);
-      if (!provider) {
-        return res.status(404).json({ message: 'Prestataire non trouvé.' });
-      }
-    }
-
-    let promo = null;
-    if (promoId) {
-      const Promo = require('../models/Promo');
-      if (!mongoose.Types.ObjectId.isValid(promoId)) {
-        return res.status(400).json({ message: 'ID de promo invalide' });
-      }
-
-      promo = await Promo.findById(promoId);
-      if (!promo) {
-        return res.status(404).json({ message: 'Promo non trouvée.' });
-      }
-    }
-
-    // ✅ Création du produit
-    const product = await Product.create({
-      name,
-      description,
-      price: parseFloat(price),
-      category,
-      stock: parseInt(stock) || 0,
-      status: status || 'available',
-      provider: provider ? provider._id : null,
-      promo: promo ? promo._id : null,
-      ...(image && { image }),
-    });
-
-    // ✅ Créer les groupes d'options si fournis
-    if (options && Array.isArray(options) && options.length > 0) {
-      const OptionGroup = require('../models/OptionGroup');
-      const ProductOption = require('../models/ProductOption');
-
-      for (const optionGroup of options) {
-        // Créer le groupe d'options
-        const group = await OptionGroup.create({
-          name: optionGroup.name,
-          description: optionGroup.name, // Utiliser le nom comme description
-          storeId: provider ? provider._id : null,
-        });
-
-        // Créer les options du groupe
-        if (optionGroup.subOptions && Array.isArray(optionGroup.subOptions)) {
-          for (const subOption of optionGroup.subOptions) {
-            const option = await ProductOption.create({
-              name: subOption.name,
-              price: subOption.price || 0,
-              storeId: provider ? provider._id : null,
-            });
-
-            // Ajouter l'option au groupe
-            group.options.push({
-              option: option._id,
-              name: subOption.name,
-              price: subOption.price || 0,
-            });
-          }
-          await group.save();
-        }
-
-        // Lier le groupe au produit
-        product.optionGroups.push(group._id);
-      }
-      await product.save();
-    }
-
-    await product.populate('provider', 'name type');
-    await product.populate('promo', 'name status');
-    await product.populate({
-      path: 'optionGroups',
-      populate: {
-        path: 'options.option',
-        model: 'ProductOption'
-      }
-    });
-
-    // Convert optionGroups to the expected options format for response
-    const formattedOptions = product.optionGroups ? product.optionGroups.map(group => ({
-      name: group.name,
-      required: false, // Default to optional
-      maxSelections: 1, // Default to 1
-      subOptions: group.options ? group.options.map(opt => ({
-        name: opt.name || opt.option?.name,
-        price: opt.price || opt.option?.price || 0
-      })) : []
-    })) : [];
-
-    res.status(201).json({
-      message: 'Produit créé avec succès',
-      product: {
-        id: product._id.toString(),
-        name: product.name,
-        category: product.category,
-        provider: product.provider ? product.provider.name : null,
-        promo: product.promo ? product.promo.name : null,
-        price: product.price,
-        stock: product.stock,
-        status: product.status,
-        image: product.image,
-        options: formattedOptions,
-      },
-    });
-  } catch (error) {
-    console.error('Error creating product:', error);
-    res.status(500).json({
-      message: 'Erreur lors de la création du produit',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
-    });
-  }
-};
-
-
-// @desc    Update product
-// @route   PUT /api/products/:id
-// @access  Private (Super Admin only)
-exports.updateProduct = async (req, res) => {
-  try {
-    const { name, description, price, category, stock, status, image, providerId, promoId } = req.body;
-
-    const updateData = {};
-
-    if (name) updateData.name = name;
-    if (description !== undefined) updateData.description = description;
-    if (price) updateData.price = parseFloat(price);
-    if (category) updateData.category = category;
-    if (stock !== undefined) updateData.stock = parseInt(stock);
-    if (status) updateData.status = status;
-    if (image !== undefined) updateData.image = image;
-
-    // 🧩 Optionnel : changement de prestataire
-    if (providerId) {
-      if (!mongoose.Types.ObjectId.isValid(providerId)) {
-        return res.status(400).json({ message: 'ID du prestataire invalide' });
-      }
-      updateData.provider = providerId;
-    } else if (providerId === null) {
-      updateData.provider = null; // retirer le prestataire
-    }
-
-    // 🧩 Optionnel : ajout ou suppression de promo
-    if (promoId) {
-      if (!mongoose.Types.ObjectId.isValid(promoId)) {
-        return res.status(400).json({ message: 'ID de promo invalide' });
-      }
-      updateData.promo = promoId;
-    } else if (promoId === null) {
-      updateData.promo = null; // retirer la promo
-    }
-
-    const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true })
-      .populate('provider', 'name type')
-      .populate('promo', 'name status');
-
-    if (!product) {
-      return res.status(404).json({ message: 'Produit non trouvé' });
-    }
-
-    res.status(200).json({
-      message: 'Produit mis à jour avec succès',
-      product: {
-        id: product._id.toString(),
-        name: product.name,
-        category: product.category,
-        provider: product.provider ? product.provider.name : null,
-        promo: product.promo ? product.promo.name : null,
-        price: product.price,
-        stock: product.stock,
-        status: product.status,
-        image: product.image,
-      },
-    });
-  } catch (error) {
-    console.error('Error updating product:', error);
-    res.status(500).json({ message: 'Erreur lors de la mise à jour du produit' });
-  }
-};
-
-
 // @desc    Delete product
 // @route   DELETE /api/products/:id
 // @access  Private (Super Admin only)
@@ -395,5 +195,234 @@ exports.getProductsByProvider = async (req, res) => {
       message: 'Erreur lors de la récupération des produits',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+};
+
+
+// Add this to your existing productsController.js
+
+// @desc Create new product (UPDATED VERSION)
+exports.createProduct = async (req, res) => {
+  try {
+    const { 
+      name, 
+      description, 
+      price, 
+      category, 
+      stock, 
+      status, 
+      providerId, 
+      promoId, 
+      image, 
+      optionGroups,  // NEW: Array of optionGroup IDs
+      availability,   // NEW
+      dineIn,        // NEW
+      delivery,      // NEW
+      takeaway       // NEW
+    } = req.body;
+
+    // Validation
+    if (!name || !price || !category) {
+      return res.status(400).json({ message: 'Nom, prix et catégorie sont requis' });
+    }
+
+    let provider = null;
+    if (providerId) {
+      if (!mongoose.Types.ObjectId.isValid(providerId)) {
+        return res.status(400).json({ message: 'ID du prestataire invalide' });
+      }
+      provider = await Provider.findById(providerId);
+      if (!provider) {
+        return res.status(404).json({ message: 'Prestataire non trouvé.' });
+      }
+    }
+
+    let promo = null;
+    if (promoId) {
+      const Promo = require('../models/Promo');
+      if (!mongoose.Types.ObjectId.isValid(promoId)) {
+        return res.status(400).json({ message: 'ID de promo invalide' });
+      }
+      promo = await Promo.findById(promoId);
+      if (!promo) {
+        return res.status(404).json({ message: 'Promo non trouvée.' });
+      }
+    }
+
+    // Create product with optionGroups
+    const product = await Product.create({
+      name,
+      description,
+      price: parseFloat(price),
+      category,
+      stock: parseInt(stock) || 0,
+      status: status || 'available',
+      provider: provider ? provider._id : null,
+      promo: promo ? promo._id : null,
+      optionGroups: optionGroups || [],  // Array of ObjectIds
+      availability: availability !== false,
+      dineIn: dineIn !== false,
+      delivery: delivery !== false,
+      takeaway: takeaway !== false,
+      ...(image && { image }),
+    });
+
+    await product.populate('provider', 'name type');
+    await product.populate('promo', 'name status');
+    await product.populate({
+      path: 'optionGroups',
+      populate: {
+        path: 'options.option',
+        model: 'ProductOption'
+      }
+    });
+
+    // Format response
+    const formattedOptions = product.optionGroups ? product.optionGroups.map(group => ({
+      name: group.name,
+      required: false,
+      maxSelections: group.max || 1,
+      subOptions: group.options ? group.options.map(opt => ({
+        name: opt.name || opt.option?.name,
+        price: opt.price || opt.option?.price || 0
+      })) : []
+    })) : [];
+
+    res.status(201).json({
+      message: 'Produit créé avec succès',
+      product: {
+        id: product._id.toString(),
+        name: product.name,
+        category: product.category,
+        provider: product.provider ? product.provider.name : null,
+        promo: product.promo ? product.promo.name : null,
+        price: product.price,
+        stock: product.stock,
+        status: product.status,
+        image: product.image,
+        optionGroups: product.optionGroups.map(g => g._id.toString()),
+        options: formattedOptions,
+        availability: product.availability,
+        dineIn: product.dineIn,
+        delivery: product.delivery,
+        takeaway: product.takeaway,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating product:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la création du produit',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+};
+
+// @desc Update product (UPDATED VERSION)
+exports.updateProduct = async (req, res) => {
+  try {
+    const { 
+      name, 
+      description, 
+      price, 
+      category, 
+      stock, 
+      status, 
+      image, 
+      providerId, 
+      promoId,
+      optionGroups,  // NEW
+      availability,   // NEW
+      dineIn,        // NEW
+      delivery,      // NEW
+      takeaway       // NEW
+    } = req.body;
+
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price) updateData.price = parseFloat(price);
+    if (category) updateData.category = category;
+    if (stock !== undefined) updateData.stock = parseInt(stock);
+    if (status) updateData.status = status;
+    if (image !== undefined) updateData.image = image;
+    
+    // NEW: Update optionGroups
+    if (optionGroups !== undefined) updateData.optionGroups = optionGroups;
+    
+    // NEW: Update availability settings
+    if (availability !== undefined) updateData.availability = availability;
+    if (dineIn !== undefined) updateData.dineIn = dineIn;
+    if (delivery !== undefined) updateData.delivery = delivery;
+    if (takeaway !== undefined) updateData.takeaway = takeaway;
+
+    // Provider update
+    if (providerId) {
+      if (!mongoose.Types.ObjectId.isValid(providerId)) {
+        return res.status(400).json({ message: 'ID du prestataire invalide' });
+      }
+      updateData.provider = providerId;
+    } else if (providerId === null) {
+      updateData.provider = null;
+    }
+
+    // Promo update
+    if (promoId) {
+      if (!mongoose.Types.ObjectId.isValid(promoId)) {
+        return res.status(400).json({ message: 'ID de promo invalide' });
+      }
+      updateData.promo = promoId;
+    } else if (promoId === null) {
+      updateData.promo = null;
+    }
+
+    const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true })
+      .populate('provider', 'name type')
+      .populate('promo', 'name status')
+      .populate({
+        path: 'optionGroups',
+        populate: {
+          path: 'options.option',
+          model: 'ProductOption'
+        }
+      });
+
+    if (!product) {
+      return res.status(404).json({ message: 'Produit non trouvé' });
+    }
+
+    // Format response
+    const formattedOptions = product.optionGroups ? product.optionGroups.map(group => ({
+      name: group.name,
+      required: false,
+      maxSelections: group.max || 1,
+      subOptions: group.options ? group.options.map(opt => ({
+        name: opt.name || opt.option?.name,
+        price: opt.price || opt.option?.price || 0
+      })) : []
+    })) : [];
+
+    res.status(200).json({
+      message: 'Produit mis à jour avec succès',
+      product: {
+        id: product._id.toString(),
+        name: product.name,
+        category: product.category,
+        provider: product.provider ? product.provider.name : null,
+        promo: product.promo ? product.promo.name : null,
+        price: product.price,
+        stock: product.stock,
+        status: product.status,
+        image: product.image,
+        optionGroups: product.optionGroups.map(g => g._id.toString()),
+        options: formattedOptions,
+        availability: product.availability,
+        dineIn: product.dineIn,
+        delivery: product.delivery,
+        takeaway: product.takeaway,
+      },
+    });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    res.status(500).json({ message: 'Erreur lors de la mise à jour du produit' });
   }
 };
