@@ -7,6 +7,7 @@ const {
   getProductsByProviderId,
   search,
   createProvider,
+  updateProvider,
   updateProviderStatus,
   deleteProvider,
 } = require('../controllers/providerController');
@@ -16,6 +17,7 @@ router.get('/', getProviders);
 router.get('/type/:type', getProvidersByType);
 router.get('/:id', getProviderById);
 router.post('/', createProvider);
+router.put('/:id', updateProvider);
 router.patch('/:id/status', updateProviderStatus);
 router.delete('/:id', deleteProvider);
 

@@ -157,6 +157,78 @@ exports.createProvider = async (req, res) => {
   }
 };
 
+// @desc    Update provider
+// @route   PUT /api/providers/:id
+// @access  Private (Super Admin only)
+exports.updateProvider = async (req, res) => {
+  try {
+    const { name, type, phone, address, email, description } = req.body;
+
+    // Validation
+    if (!name || !phone || !address) {
+      return res.status(400).json({
+        message: 'Nom, téléphone et adresse sont requis'
+      });
+    }
+
+    // Check if another provider with same phone or email exists
+    const existingProvider = await Provider.findOne({
+      $or: [
+        { phone },
+        ...(email && [{ email: email.toLowerCase() }])
+      ],
+      _id: { $ne: req.params.id }
+    });
+
+    if (existingProvider) {
+      return res.status(400).json({
+        message: 'Un prestataire avec ce téléphone ou email existe déjà'
+      });
+    }
+
+    const provider = await Provider.findByIdAndUpdate(
+      req.params.id,
+      {
+        name,
+        type,
+        phone,
+        address,
+        ...(email && { email: email.toLowerCase() }),
+        ...(description !== undefined && { description }),
+      },
+      { new: true }
+    );
+
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    res.status(200).json({
+      message: 'Prestataire mis à jour avec succès',
+      provider: {
+        id: provider._id.toString(),
+        name: provider.name,
+        type: provider.type,
+        category: typeLabels[provider.type] || provider.type,
+        phone: provider.phone,
+        address: provider.address,
+        email: provider.email,
+        description: provider.description,
+        totalOrders: 0,
+        rating: 0,
+        status: provider.status
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating provider:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la mise à jour du prestataire',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // @desc    Update provider status
 // @route   PATCH /api/providers/:id/status
 // @access  Private (Super Admin only)
