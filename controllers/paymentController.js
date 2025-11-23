@@ -1,102 +1,55 @@
-// controllers/paymentController.js
-const axios = require('axios');
-const Transaction = require('../models/Transaction');
+const konnectAPI = require('../services/konnectAPI');
+const Transaction = require('../models/Transaction'); // Modèle transaction
 
-/**
- * @desc   Initier un paiement Swared
- * @route  POST /api/payments/initiate
- */
-const initiatePayment = async (req, res) => {
-  const { amount, userId } = req.body;
-
+exports.initiateKonnectPayment = async (req, res) => {
   try {
-    // 1️⃣ Créer la transaction dans ta base locale
+    const { amount, orderId, userId } = req.body;
+    // Créer une transaction locale avec statut "pending"
     const transaction = await Transaction.create({
-      userId,
+      user: userId,
+      type: 'paiement',
       amount,
       status: 'pending',
+      details: { orderId },
     });
 
-    // 2️⃣ Appeler l'API de Swared (endpoint exemple — à ajuster selon leur doc)
-    const response = await axios.post(
-      `${process.env.SWARED_API_URL}/payment/create`,
-      {
-        amount,
-        currency: 'TND',
-        description: 'Paiement commande mobile',
-        reference: transaction._id, // identifiant interne
-        redirect_url: `${process.env.APP_URL}/api/payments/callback`, // callback
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.SWARED_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    const returnUrl = 'myapp://payment-result'; // Deep link app mobile
 
-    // 3️⃣ Sauvegarder l'URL de paiement
-    transaction.paymentUrl = response.data.payment_url || response.data.url;
-    transaction.transactionId = response.data.transaction_id;
+    // Appeler Konnect API
+    const paymentData = await konnectAPI.createPayment({
+      amount,
+      currency: 'TND',
+      orderId,
+      returnUrl,
+    });
+
+    // Mettre à jour la transaction avec l'URL et Id Konnect
+    transaction.details.paymentUrl = paymentData.payment_url;
+    transaction.details.konnectTransactionId = paymentData.id;
     await transaction.save();
 
-    // 4️⃣ Retourner l'URL au front (React Native)
-    res.json({
+    res.status(201).json({
       success: true,
-      paymentUrl: transaction.paymentUrl,
-      transactionId: transaction.transactionId,
+      paymentUrl: paymentData.payment_url,
+      transactionId: paymentData.id,
     });
   } catch (error) {
-    console.error('Erreur paiement Swared:', error.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la création du paiement',
-      error: error.response?.data || error.message,
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
-/**
- * @desc   Callback (webhook) Swared — confirmation du paiement
- * @route  POST /api/payments/callback
- */
-const paymentCallback = async (req, res) => {
+// Webhook pour mise à jour paiement Konnect (à configurer dans Konnect dashboard)
+exports.konnectWebhook = async (req, res) => {
   try {
-    const { transaction_id, status } = req.body;
+    const { transactionId, status } = req.body; // selon doc Konnect
+    const transaction = await Transaction.findOne({ 'details.konnectTransactionId': transactionId });
+    if (!transaction) return res.status(404).send();
 
-    const transaction = await Transaction.findOne({ transactionId: transaction_id });
-    if (!transaction) return res.status(404).json({ message: 'Transaction introuvable' });
-
-    // Vérification du statut
-    transaction.status = status === 'success' ? 'success' : 'failed';
+    transaction.status = status === 'success' ? 'completed' : 'failed';
     await transaction.save();
-
-    // Ici tu peux mettre à jour la commande associée ou notifier le client
-    console.log('Paiement mis à jour:', transaction._id, '→', transaction.status);
 
     res.sendStatus(200);
   } catch (error) {
-    console.error('Erreur callback:', error.message);
-    res.status(500).json({ message: 'Erreur callback' });
+    res.status(500).send();
   }
-};
-
-/**
- * @desc   Vérifier le statut d'un paiement
- * @route  GET /api/payments/status/:id
- */
-const checkPaymentStatus = async (req, res) => {
-  try {
-    const transaction = await Transaction.findById(req.params.id);
-    if (!transaction) return res.status(404).json({ message: 'Transaction introuvable' });
-    res.json({ status: transaction.status });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-module.exports = {
-  initiatePayment,
-  paymentCallback,
-  checkPaymentStatus,
 };

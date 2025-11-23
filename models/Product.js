@@ -56,18 +56,6 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    dineIn: {
-      type: Boolean,
-      default: true,
-    },
-    delivery: {
-      type: Boolean,
-      default: true,
-    },
-    takeaway: {
-      type: Boolean,
-      default: true,
-    },
   },
   {
     timestamps: true,
