@@ -216,9 +216,6 @@ exports.createProduct = async (req, res) => {
       image, 
       optionGroups,  // NEW: Array of optionGroup IDs
       availability,   // NEW
-      dineIn,        // NEW
-      delivery,      // NEW
-      takeaway       // NEW
     } = req.body;
 
     // Validation
@@ -261,9 +258,6 @@ exports.createProduct = async (req, res) => {
       promo: promo ? promo._id : null,
       optionGroups: optionGroups || [],  // Array of ObjectIds
       availability: availability !== false,
-      dineIn: dineIn !== false,
-      delivery: delivery !== false,
-      takeaway: takeaway !== false,
       ...(image && { image }),
     });
 
@@ -303,9 +297,6 @@ exports.createProduct = async (req, res) => {
         optionGroups: product.optionGroups.map(g => g._id.toString()),
         options: formattedOptions,
         availability: product.availability,
-        dineIn: product.dineIn,
-        delivery: product.delivery,
-        takeaway: product.takeaway,
       },
     });
   } catch (error) {
@@ -332,9 +323,6 @@ exports.updateProduct = async (req, res) => {
       promoId,
       optionGroups,  // NEW
       availability,   // NEW
-      dineIn,        // NEW
-      delivery,      // NEW
-      takeaway       // NEW
     } = req.body;
 
     const updateData = {};
@@ -351,9 +339,6 @@ exports.updateProduct = async (req, res) => {
     
     // NEW: Update availability settings
     if (availability !== undefined) updateData.availability = availability;
-    if (dineIn !== undefined) updateData.dineIn = dineIn;
-    if (delivery !== undefined) updateData.delivery = delivery;
-    if (takeaway !== undefined) updateData.takeaway = takeaway;
 
     // Provider update
     if (providerId) {
@@ -416,9 +401,6 @@ exports.updateProduct = async (req, res) => {
         optionGroups: product.optionGroups.map(g => g._id.toString()),
         options: formattedOptions,
         availability: product.availability,
-        dineIn: product.dineIn,
-        delivery: product.delivery,
-        takeaway: product.takeaway,
       },
     });
   } catch (error) {

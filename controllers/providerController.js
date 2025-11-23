@@ -36,7 +36,8 @@ exports.getProviders = async (req, res) => {
       address: provider.address,
       totalOrders: 0, // TODO: Calculate from orders when implemented
       rating: 0, // TODO: Calculate from reviews when implemented
-      status: provider.status
+      status: provider.status,
+      image: provider.image
     }));
 
     // Add cache-busting headers
@@ -99,7 +100,7 @@ exports.getProductsByProviderId = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.createProvider = async (req, res) => {
   try {
-    const { name, type, phone, address, email, description } = req.body;
+    const { name, type, phone, address, email, description, image } = req.body;
 
     // Validation
     if (!name || !phone || !address) {
@@ -130,6 +131,7 @@ exports.createProvider = async (req, res) => {
       address,
       ...(email && { email: email.toLowerCase() }),
       ...(description && { description }),
+      ...(image && { image }),
       status: 'active'
     });
 
@@ -144,7 +146,8 @@ exports.createProvider = async (req, res) => {
         address: provider.address,
         totalOrders: 0,
         rating: 0,
-        status: provider.status
+        status: provider.status,
+        image: provider.image
       }
     });
 
@@ -162,7 +165,7 @@ exports.createProvider = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.updateProvider = async (req, res) => {
   try {
-    const { name, type, phone, address, email, description } = req.body;
+    const { name, type, phone, address, email, description, image } = req.body;
 
     // Validation
     if (!name || !phone || !address) {
@@ -195,6 +198,7 @@ exports.updateProvider = async (req, res) => {
         address,
         ...(email && { email: email.toLowerCase() }),
         ...(description !== undefined && { description }),
+        ...(image && { image }),
       },
       { new: true }
     );
@@ -216,7 +220,8 @@ exports.updateProvider = async (req, res) => {
         description: provider.description,
         totalOrders: 0,
         rating: 0,
-        status: provider.status
+        status: provider.status,
+        image: provider.image
       }
     });
 
