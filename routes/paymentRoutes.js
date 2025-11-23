@@ -1,14 +1,8 @@
-// routes/paymentRoutes.js
 const express = require('express');
 const router = express.Router();
-const {
-  initiatePayment,
-  paymentCallback,
-  checkPaymentStatus,
-} = require('../controllers/paymentController');
+const paymentController = require('../controllers/paymentController');
 
-router.post('/initiate', initiatePayment);
-router.post('/callback', paymentCallback);
-router.get('/status/:id', checkPaymentStatus);
+router.post('/initiate-konnect', paymentController.initiateKonnectPayment);
+router.post('/konnect-webhook', paymentController.konnectWebhook);
 
 module.exports = router;

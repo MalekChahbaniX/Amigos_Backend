@@ -7,7 +7,7 @@ const router = express.Router();
 // Configuration de multer pour les images de produits
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '..', '..', 'uploads', 'product'));
+    cb(null, path.join(__dirname, '..', 'uploads', 'product'));
   },
   filename: (req, file, cb) => {
     // Générer un nom unique avec l'extension originale
@@ -34,6 +34,27 @@ const upload = multer({
   }
 });
 
+// Configuration de multer pour les images de prestataires
+const providerStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, '..', 'uploads', 'provider'));
+  },
+  filename: (req, file, cb) => {
+    // Générer un nom unique avec l'extension originale
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+// Configuration de multer pour provider
+const uploadProvider = multer({
+  storage: providerStorage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB max
+  }
+});
+
 // Route pour uploader une image de produit
 router.post('/product', upload.single('image'), (req, res) => {
   try {
@@ -44,6 +65,31 @@ router.post('/product', upload.single('image'), (req, res) => {
     // Construire l'URL de l'image
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const imageUrl = `${baseUrl}/uploads/product/${req.file.filename}`;
+
+    res.json({
+      success: true,
+      imageUrl: imageUrl,
+      message: 'Image uploadée avec succès'
+    });
+  } catch (error) {
+    console.error('Erreur lors de l\'upload:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'upload de l\'image'
+    });
+  }
+});
+
+// Route pour uploader une image de prestataire
+router.post('/provider', uploadProvider.single('image'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Aucun fichier fourni' });
+    }
+
+    // Construire l'URL de l'image
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const imageUrl = `${baseUrl}/uploads/provider/${req.file.filename}`;
 
     res.json({
       success: true,

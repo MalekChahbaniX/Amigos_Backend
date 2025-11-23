@@ -24,18 +24,6 @@ const productOptionSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
-  dineIn: {
-    type: Boolean,
-    default: true,
-  },
-  delivery: {
-    type: Boolean,
-    default: true,
-  },
-  takeaway: {
-    type: Boolean,
-    default: true,
-  },
   optionGroups: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'OptionGroup',

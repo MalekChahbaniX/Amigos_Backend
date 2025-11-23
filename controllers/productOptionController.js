@@ -5,7 +5,7 @@ const OptionGroup = require('../models/OptionGroup');
 // Create product option
 exports.createProductOption = async (req, res) => {
   try {
-    const { name, price, groupId, storeId, image, availability, dineIn, delivery, takeaway } = req.body;
+    const { name, price, groupId, storeId, image, availability} = req.body;
 
     if (!name) {
       return res.status(400).json({ message: "Nom requis" });
@@ -17,9 +17,6 @@ exports.createProductOption = async (req, res) => {
       storeId,
       image,
       availability: availability !== undefined ? availability : true,
-      dineIn: dineIn !== undefined ? dineIn : true,
-      delivery: delivery !== undefined ? delivery : true,
-      takeaway: takeaway !== undefined ? takeaway : true,
     };
 
     const option = await ProductOption.create(optionData);

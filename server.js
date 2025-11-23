@@ -27,8 +27,10 @@ const corsOptions = {
   origin: [
     'http://localhost:5173',  // Vite dev server
     'http://localhost:3000',  // Alternative port
+    'http://localhost:8081',  // React Native Metro bundler
     'http://127.0.0.1:5173',
     'http://127.0.0.1:3000',
+    'http://127.0.0.1:8081', // React Native
     'https://amigos-dashboard-rrnj.onrender.com',
     'http://amigos-delivery.duckdns.org',
     'https://amigos-delivery.duckdns.org',
@@ -59,7 +61,7 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 // Middleware pour servir les fichiers statiques (uploads)
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
