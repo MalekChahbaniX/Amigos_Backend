@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
       return this.role === 'client';
     },
     unique: true,
+    sparse: true,
     validate: {
       validator: function(v) {
         return /^\+216\d{8}$/.test(v);

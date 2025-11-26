@@ -344,12 +344,12 @@ exports.registerSuperAdmin = async (req, res) => {
     }
 
     // Vérifier si un super admin existe déjà
-    const existingSuperAdmin = await User.findOne({ role: 'superAdmin' });
-    if (existingSuperAdmin) {
-      return res.status(400).json({
-        message: 'Un super administrateur existe déjà'
-      });
-    }
+    // const existingSuperAdmin = await User.findOne({ role: 'superAdmin' });
+    // if (existingSuperAdmin) {
+    //   return res.status(400).json({
+    //     message: 'Un super administrateur existe déjà'
+    //   });
+    // }
 
     // Vérifier si l'email existe déjà
     const existingUser = await User.findOne({ email });
