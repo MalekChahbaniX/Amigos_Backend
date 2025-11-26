@@ -25,6 +25,8 @@ const app = express();
 // Configuration CORS pour permettre les requêtes du frontend
 const corsOptions = {
   origin: [
+    'http://amigosdelivery25.com',
+    'https://amigosdelivery25.com',
     'http://localhost:5173',  // Vite dev server
     'http://localhost:3000',  // Alternative port
     'http://localhost:8081',  // React Native Metro bundler
