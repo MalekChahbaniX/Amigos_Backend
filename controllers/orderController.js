@@ -7,20 +7,34 @@ const AppSetting = require('../models/AppSetting');
 // @route   POST /api/orders
 // @access  Private (client)
 exports.createOrder = async (req, res) => {
+  console.log('📥 Incoming order request:', {
+    client: req.body.client,
+    provider: req.body.provider,
+    paymentMethod: req.body.paymentMethod,
+    totalAmount: req.body.totalAmount,
+    itemsCount: req.body.items?.length || 0,
+  });
+
   const { client, provider, items, deliveryAddress, paymentMethod, totalAmount, deliveryFee, subtotal, cardInfo } = req.body;
 
   try {
     // 🧠 1. Charger paramètres globaux
     const appSetting = await AppSetting.findOne() || { appFee: 1.0 };
+    console.log('⚙️ App settings loaded:', { appFee: appSetting.appFee });
 
     // 🧠 2. Charger provider (pour connaître son type : restaurant, course, etc.)
+    console.log('🔍 Fetching provider:', provider);
     const providerData = await Provider.findById(provider);
     if (!providerData) {
+      console.log('❌ Provider not found:', provider);
       return res.status(404).json({ message: 'Provider not found' });
     }
+    console.log('✅ Provider loaded:', { id: providerData._id, name: providerData.name, type: providerData.type });
 
     // 🧠 3. Vérifier promo active applicable
+    console.log('🎁 Checking for active promo...');
     const promo = await Promo.findOne({ status: 'active' });
+    console.log('Promo found:', promo ? { id: promo._id, name: promo.name, maxOrders: promo.maxOrders, ordersUsed: promo.ordersUsed } : 'None');
 
     let finalAmount = totalAmount;
     let appliedPromo = null;
@@ -42,9 +56,11 @@ exports.createOrder = async (req, res) => {
     } else {
       // ❌ Pas de promo → montant normal + frais app
       finalAmount = totalAmount + appSetting.appFee;
+      console.log('❌ No promo applied, final amount:', finalAmount);
     }
 
     // 🧠 4. Traiter l'adresse de livraison
+    console.log('📍 Processing delivery address:', deliveryAddress);
     let formattedDeliveryAddress = {};
     if (typeof deliveryAddress === 'string') {
       // Convertir l'adresse string en objet
@@ -56,6 +72,7 @@ exports.createOrder = async (req, res) => {
     } else if (typeof deliveryAddress === 'object') {
       formattedDeliveryAddress = deliveryAddress;
     }
+    console.log('📍 Formatted address:', formattedDeliveryAddress);
 
     // 🧠 5. Traiter les items
     const formattedItems = items.map(item => ({
@@ -66,13 +83,15 @@ exports.createOrder = async (req, res) => {
     }));
 
     // 🧠 6. Convertir la méthode de paiement
+    console.log('💳 Original payment method:', paymentMethod);
     let formattedPaymentMethod = paymentMethod;
     if (paymentMethod === 'card') {
       formattedPaymentMethod = 'online';
     }
+    console.log('💳 Formatted payment method:', formattedPaymentMethod);
 
     // 🧠 7. Créer la commande
-    const order = await Order.create({
+    const orderToCreate = {
       client,
       provider,
       items: formattedItems,
@@ -84,7 +103,11 @@ exports.createOrder = async (req, res) => {
       deliveryFee: deliveryFee || 0,
       subtotal: subtotal || 0,
       cardInfo: cardInfo || undefined,
-    });
+    };
+    console.log('💾 Creating order with data:', orderToCreate);
+
+    const order = await Order.create(orderToCreate);
+    console.log('✅ Order created successfully:', { id: order._id, status: order.status, paymentMethod: order.paymentMethod });
 
     res.status(201).json({
       message: appliedPromo
@@ -93,6 +116,11 @@ exports.createOrder = async (req, res) => {
       order,
     });
   } catch (error) {
+    console.error('❌ Error creating order:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+    });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
