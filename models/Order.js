@@ -12,8 +12,8 @@ const orderSchema = new mongoose.Schema({
     required: true,
   },
   promo: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'Promo',
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Promo',
   },
   items: [
     {
@@ -34,32 +34,47 @@ const orderSchema = new mongoose.Schema({
         type: Number,
         required: true,
       },
+      p1: {
+        type: Number,
+        required: true, // Prix payout restaurant pour ce produit
+      },
+      p2: {
+        type: Number,
+        required: true, // Prix client pour ce produit
+      },
+      deliveryCategory: {
+        type: String,
+        enum: ['restaurant', 'course', 'pharmacy'],
+        default: 'restaurant',
+      },
     },
   ],
+  // TOTALS
   totalAmount: {
     type: Number,
-    required: true,
+    required: true, // Total P2 + appFee + deliveryFee
   },
   clientProductsPrice: {
     type: Number,
-    required: true,
+    required: true, // Total P2 (sans frais)
   },
   restaurantPayout: {
     type: Number,
-    required: true,
+    required: true, // Total P1
   },
   deliveryFee: {
     type: Number,
-    default: 0,
+    required: true, // Frais de livraison selon zone
   },
   appFee: {
     type: Number,
-    default: 0,
+    required: true, // Frais application selon catégorie
   },
   platformSolde: {
     type: Number,
-    required: true,
+    required: true, // Solde plateforme = (P2_total - P1_total) + deliveryFee + appFee
   },
+  // AUTRES CHAMPS
   status: {
     type: String,
     enum: ['pending', 'accepted', 'in_delivery', 'delivered', 'cancelled'],
@@ -80,6 +95,33 @@ const orderSchema = new mongoose.Schema({
   deliveryDriver: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
+  },
+  // ZONE ET CALCULS
+  zone: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Zone',
+  },
+  distance: {
+    type: Number, // Distance en km
+  },
+  // PRIX DÉTAILLÉS
+  p1Total: {
+    type: Number,
+    required: true, // Total P1 de tous les produits
+  },
+  p2Total: {
+    type: Number,
+    required: true, // Total P2 de tous les produits
+  },
+  // PRIX FINAL CLIENT
+  finalAmount: {
+    type: Number,
+    required: true, // P2_total + deliveryFee + appFee
+  },
+  // PROMO
+  appliedPromo: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Promo',
   },
   createdAt: {
     type: Date,

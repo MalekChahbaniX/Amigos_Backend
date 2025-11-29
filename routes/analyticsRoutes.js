@@ -5,6 +5,7 @@ const {
   getRevenueAnalytics,
   getUserAnalytics,
   getProductAnalytics,
+  getBalanceAnalytics,
 } = require('../controllers/analyticsController');
 
 // All analytics routes require authentication
@@ -14,5 +15,6 @@ router.get('/overview', getAnalyticsOverview);
 router.get('/revenue', getRevenueAnalytics);
 router.get('/users', getUserAnalytics);
 router.get('/products', getProductAnalytics);
+router.get('/balances', getBalanceAnalytics);
 
 module.exports = router;

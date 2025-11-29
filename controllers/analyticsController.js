@@ -40,7 +40,8 @@ exports.getAnalyticsOverview = async (req, res) => {
             }
           },
           count: { $sum: 1 },
-          revenue: { $sum: '$totalAmount' }
+          revenue: { $sum: '$totalAmount' },
+          solde: { $sum: '$platformSolde' }
         }
       },
       {
@@ -60,7 +61,8 @@ exports.getAnalyticsOverview = async (req, res) => {
         $group: {
           _id: '$providerId',
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$totalAmount' }
+          totalRevenue: { $sum: '$totalAmount' },
+          totalSolde: { $sum: '$platformSolde' }
         }
       },
       {
@@ -79,7 +81,8 @@ exports.getAnalyticsOverview = async (req, res) => {
           name: '$provider.name',
           type: '$provider.type',
           totalOrders: 1,
-          totalRevenue: 1
+          totalRevenue: 1,
+          totalSolde: 1
         }
       },
       {
@@ -195,11 +198,74 @@ exports.getAnalyticsOverview = async (req, res) => {
             }
           },
           revenue: { $sum: '$totalAmount' },
+          solde: { $sum: '$platformSolde' },
           orders: { $sum: 1 }
         }
       },
       {
         $sort: { _id: 1 }
+      }
+    ]);
+
+    // Platform balance summary
+    const platformBalance = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          status: { $in: ['delivered', 'completed'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSolde: { $sum: '$platformSolde' },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      }
+    ]);
+
+    // Deliverer performance
+    const delivererPerformance = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          status: { $in: ['delivered', 'completed'] },
+          deliveryDriver: { $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: '$deliveryDriver',
+          totalOrders: { $sum: 1 },
+          totalSolde: { $sum: '$platformSolde' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'deliverer'
+        }
+      },
+      {
+        $unwind: '$deliverer'
+      },
+      {
+        $project: {
+          name: { $concat: ['$deliverer.firstName', ' ', '$deliverer.lastName'] },
+          totalOrders: 1,
+          totalSolde: 1
+        }
+      },
+      {
+        $sort: { totalOrders: -1 }
+      },
+      {
+        $limit: 10
       }
     ]);
 
@@ -227,6 +293,16 @@ exports.getAnalyticsOverview = async (req, res) => {
         popularProducts,
         providerTypes,
         productCategories
+      },
+      platform: {
+        balance: platformBalance[0] || {
+          totalSolde: 0,
+          totalRevenue: 0,
+          totalPayout: 0,
+          totalDeliveryFee: 0,
+          totalAppFee: 0
+        },
+        delivererPerformance
       }
     });
 
@@ -531,6 +607,168 @@ exports.getProductAnalytics = async (req, res) => {
     console.error('Error fetching product analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses produits',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Get platform and deliverer balance analytics
+// @route   GET /api/analytics/balances
+// @access  Private (Super Admin only)
+exports.getBalanceAnalytics = async (req, res) => {
+  try {
+    const { period = '30', category, delivererId } = req.query;
+    const days = parseInt(period);
+    const startDate = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
+
+    let matchStage = {
+      status: { $in: ['delivered', 'completed'] },
+      createdAt: { $gte: startDate }
+    };
+    
+    if (category) {
+      matchStage['items.deliveryCategory'] = category;
+    }
+    
+    if (delivererId) {
+      matchStage.deliveryDriver = delivererId;
+    }
+
+    // Platform balance over time
+    const platformBalanceOverTime = await Order.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$createdAt'
+            }
+          },
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Platform balance by category
+    const balanceByCategory = await Order.aggregate([
+      { $match: matchStage },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.deliveryCategory',
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      },
+      { $sort: { totalSolde: -1 } }
+    ]);
+
+    // Deliverer balance summary
+    const delivererBalanceSummary = await Order.aggregate([
+      {
+        $match: {
+          ...matchStage,
+          deliveryDriver: { $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: '$deliveryDriver',
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          averageSolde: { $avg: '$platformSolde' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'deliverer'
+        }
+      },
+      {
+        $unwind: '$deliverer'
+      },
+      {
+        $project: {
+          delivererId: '$_id',
+          delivererName: { $concat: ['$deliverer.firstName', ' ', '$deliverer.lastName'] },
+          totalSolde: 1,
+          totalOrders: 1,
+          averageSolde: 1
+        }
+      },
+      { $sort: { totalSolde: -1 } },
+      { $limit: 20 }
+    ]);
+
+    // Platform balance summary
+    const platformSummary = await Order.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      }
+    ]);
+
+    // Commission breakdown
+    const commissionBreakdown = await Order.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          commissionPlateforme: { $sum: { $subtract: ['$clientProductsPrice', '$restaurantPayout'] } },
+          fraisLivraison: { $sum: '$deliveryFee' },
+          fraisApplication: { $sum: '$appFee' }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      period: `${days} days`,
+      category: category || 'all',
+      delivererId: delivererId || null,
+      platformBalanceOverTime,
+      balanceByCategory,
+      delivererBalanceSummary,
+      platformSummary: platformSummary[0] || {
+        totalSolde: 0,
+        totalOrders: 0,
+        totalRevenue: 0,
+        totalPayout: 0,
+        totalDeliveryFee: 0,
+        totalAppFee: 0
+      },
+      commissionBreakdown: commissionBreakdown[0] || {
+        commissionPlateforme: 0,
+        fraisLivraison: 0,
+        fraisApplication: 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching balance analytics:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des analyses de soldes',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

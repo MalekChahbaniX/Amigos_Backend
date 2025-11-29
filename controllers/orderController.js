@@ -2,8 +2,10 @@ const Order = require('../models/Order');
 const Provider = require('../models/Provider');
 const Promo = require('../models/Promo');
 const AppSetting = require('../models/AppSetting');
+const Zone = require('../models/Zone');
+const Product = require('../models/Product');
 
-// @desc    Create a new order
+// @desc    Create a new order with complete pricing logic
 // @route   POST /api/orders
 // @access  Private (client)
 exports.createOrder = async (req, res) => {
@@ -15,156 +17,232 @@ exports.createOrder = async (req, res) => {
     itemsCount: req.body.items?.length || 0,
   });
 
-  const { client, provider, items, deliveryAddress, paymentMethod, totalAmount, deliveryFee, subtotal, cardInfo } = req.body;
+  const { 
+    client, 
+    provider, 
+    items, 
+    deliveryAddress, 
+    paymentMethod, 
+    totalAmount, 
+    deliveryFee, 
+    subtotal, 
+    cardInfo,
+    zoneId,
+    distance
+  } = req.body;
 
   try {
-    // 🧠 2. Charger provider (pour connaître son type : restaurant, course, etc.)
+    // 1. Charger provider (pour connaître son type : restaurant, course, etc.)
     console.log('🔍 Fetching provider:', provider);
     const providerData = await Provider.findById(provider);
     if (!providerData) {
       console.log('❌ Provider not found:', provider);
       return res.status(404).json({ message: 'Provider not found' });
     }
-    console.log('✅ Provider loaded:', { id: providerData._id, name: providerData.name, type: providerData.type, csR: providerData.csRPercent, csC: providerData.csCPercent });
+    console.log('✅ Provider loaded:', { 
+      id: providerData._id, 
+      name: providerData.name, 
+      type: providerData.type, 
+      csR: providerData.csRPercent, 
+      csC: providerData.csCPercent 
+    });
 
-    // 🧠 Calculer les sous-totaux P1 (restaurant) et P2 (client) selon commissions
+    // 2. Charger les produits pour obtenir P1, P2, deliveryCategory
+    console.log('🛒 Loading products for pricing...');
+    const productIds = items.map(item => item.product).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } });
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
+    
+    // 3. Calculer les totaux P1, P2 et vérifier les catégories
     console.log('💰 Calculating pricing with commissions...');
-    let clientSubtotal = 0;
-    let restaurantSubtotal = 0;
-    const csR = (providerData.csRPercent || 5) / 100; // default 5%
-    const csC = (providerData.csCPercent || 0) / 100; // default 0%
-    if (!items || !Array.isArray(items)) {
-      return res.status(400).json({ message: 'Invalid or missing items array' });
-    }
+    let p1Total = 0;
+    let p2Total = 0;
+    let hasRestaurant = false;
+    let hasCourse = false;
+    let hasPharmacy = false;
+
+    const formattedItems = [];
+    
     for (const item of items) {
-      const P = item.price || 0;
+      const product = productMap.get(item.product?.toString() || item.productId?.toString());
+      let P1, P2, deliveryCategory;
+      
+      if (product) {
+        // Utiliser les valeurs calculées du produit
+        P1 = product.p1;
+        P2 = product.p2;
+        deliveryCategory = product.deliveryCategory;
+        
+        // Catégorisation
+        if (deliveryCategory === 'restaurant') hasRestaurant = true;
+        if (deliveryCategory === 'course') hasCourse = true;
+        if (deliveryCategory === 'pharmacy') hasPharmacy = true;
+      } else {
+        // Calculer manuellement si le produit n'existe pas
+        const P = item.price || 0;
+        const csR = (providerData.csRPercent || 5) / 100;
+        const csC = (providerData.csCPercent || 0) / 100;
+        P1 = P * (1 - csR);
+        P2 = P * (1 + csC);
+        deliveryCategory = providerData.type; // Utiliser le type du provider comme fallback
+      }
+      
       const qty = item.quantity || 1;
-      const P1 = P * (1 - csR); // restaurant payout
-      const P2 = P * (1 + csC); // client price
-      clientSubtotal += P2 * qty;
-      restaurantSubtotal += P1 * qty;
-      console.log(`Item ${item.name || 'unknown'}: P=${P}, qty=${qty}, P1=${P1}, P2=${P2}`);
+      p1Total += P1 * qty;
+      p2Total += P2 * qty;
+      
+      formattedItems.push({
+        product: item.product || item.productId || null,
+        name: item.name,
+        price: item.price,
+        quantity: qty,
+        p1: P1,
+        p2: P2,
+        deliveryCategory: deliveryCategory,
+      });
+      
+      console.log(`Item ${item.name || 'unknown'}: P=${item.price}, qty=${qty}, P1=${P1}, P2=${P2}, category=${deliveryCategory}`);
     }
-    console.log(`🧮 Subtotals: client=${clientSubtotal}, restaurant=${restaurantSubtotal}`);
 
-    // ✅ Valider que le total soumis correspond au sous-total client (tolérance 0.01)
-    if (Math.abs(totalAmount - clientSubtotal) > 0.01) {
-      console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${clientSubtotal}`);
-      return res.status(400).json({ message: 'Total amount does not match calculated client subtotal' });
+    console.log(`🧮 Totals: p1Total=${p1Total}, p2Total=${p2Total}`);
+
+    // 4. Déterminer la catégorie de livraison (priorité: course > pharmacy > restaurant)
+    let deliveryCategory = 'restaurant';
+    if (hasCourse) deliveryCategory = 'course';
+    else if (hasPharmacy) deliveryCategory = 'pharmacy';
+    
+    console.log('🏷️ Delivery category:', deliveryCategory);
+
+    // 5. Calculer les frais de livraison selon la zone
+    console.log('🚚 Calculating delivery fee...');
+    let calculatedDeliveryFee = 0;
+    
+    if (zoneId) {
+      const zone = await Zone.findById(zoneId);
+      if (zone) {
+        calculatedDeliveryFee = zone.price;
+        console.log(`📍 Zone ${zone.number}: delivery fee = ${calculatedDeliveryFee}`);
+      }
+    } else if (distance) {
+      // Trouver la zone correspondante à la distance
+      const zone = await Zone.findOne({
+        minDistance: { $lte: distance },
+        maxDistance: { $gte: distance }
+      });
+      if (zone) {
+        calculatedDeliveryFee = zone.price;
+        console.log(`📍 Distance ${distance}km -> Zone ${zone.number}: delivery fee = ${calculatedDeliveryFee}`);
+      }
     }
+    
+    // Utiliser la deliveryFee fournie ou celle calculée
+    const finalDeliveryFee = deliveryFee !== undefined ? deliveryFee : calculatedDeliveryFee;
 
-    // 🧠 3. Vérifier promo active applicable
+    // 6. Charger les frais application
+    console.log('💳 Loading app fees...');
+    const appSetting = await AppSetting.findOne();
+    const appFee = appSetting ? appSetting.appFee : (deliveryCategory === 'restaurant' ? 0 : 1.5);
+    console.log('📱 App fee:', appFee);
+
+    // 7. Calculer le montant final
+    const finalAmount = p2Total + finalDeliveryFee + appFee;
+    console.log(`💰 Final amount: p2Total(${p2Total}) + deliveryFee(${finalDeliveryFee}) + appFee(${appFee}) = ${finalAmount}`);
+
+    // 8. Vérifier promo active applicable
     console.log('🎁 Checking for active promo...');
     const promo = await Promo.findOne({ status: 'active' });
     console.log('Promo found:', promo ? { id: promo._id, name: promo.name, maxOrders: promo.maxOrders, ordersUsed: promo.ordersUsed } : 'None');
 
-    let finalAmount = totalAmount;
     let appliedPromo = null;
+    let promoDiscount = 0;
 
     if (
       promo &&
-      promo.targetServices.includes(providerData.type) &&
+      promo.targetServices.includes(deliveryCategory) &&
       promo.ordersUsed < promo.maxOrders &&
-      totalAmount <= promo.maxAmount
+      finalAmount <= promo.maxAmount
     ) {
-      // ✅ Promo applicable
-      const appliedAppFee = promo.overrideAppFee ?? (providerData.type === 'restaurant' ? 0 : 1.5);
-      finalAmount = appliedAppFee; // le client paie juste les frais app
+      // Promo applicable
       appliedPromo = promo;
-
+      promoDiscount = promo.discountAmount || 0;
+      console.log(`✅ Promo "${promo.name}" applied! Discount: ${promoDiscount}`);
+      
       // Incrémenter le compteur promo
       promo.ordersUsed += 1;
       await promo.save();
-    } else {
-      // ❌ Pas de promo → montant normal + frais app (category-dependent)
-      const categoryAppFee = providerData.type === 'restaurant' ? 0 : 1.5;
-      finalAmount = totalAmount + categoryAppFee;
-      console.log('❌ No promo applied, final amount:', finalAmount, 'appFee:', categoryAppFee);
     }
 
-    // 🧠 4. Créer la commande avec les champs solde et prix détaillés
-    const orderData = new Order({
-      client,
-      provider,
-      items,
-      deliveryAddress,
-      paymentMethod,
-      deliveryFee: deliveryFee || 0,
-      subtotal: subtotal || clientSubtotal,
-      totalAmount,
-      clientProductsPrice: clientSubtotal,
-      restaurantPayout: restaurantSubtotal,
-      appFee: providerData.type === 'restaurant' ? 0 : 1.5,
-      platformSolde: clientSubtotal - restaurantSubtotal + (deliveryFee || 0) + (providerData.type === 'restaurant' ? 0 : 1.5),
-      status: 'pending',
-      finalAmount,
-      appliedPromo: appliedPromo ? appliedPromo._id : null,
-    });
-    console.log('📦 Order created with solde:', orderData.platformSolde);
+    // 9. Appliquer la promo si applicable
+    const totalAmountAfterPromo = Math.max(0, finalAmount - promoDiscount);
 
-    // Sauvegarder
-    await orderData.save();
-    await orderData.populate('provider');
-    console.log('✅ Order saved and populated');
-
-    // 🧠 5. Traiter l'adresse de livraison
-    console.log('📍 Processing delivery address:', deliveryAddress);
-    let formattedDeliveryAddress = {};
-    if (typeof deliveryAddress === 'string') {
-      // Convertir l'adresse string en objet
-      formattedDeliveryAddress = {
-        street: deliveryAddress,
-        city: '', // À compléter si besoin
-        zipCode: '', // À compléter si besoin
-      };
-    } else if (typeof deliveryAddress === 'object') {
-      formattedDeliveryAddress = deliveryAddress;
+    // 10. Valider le montant total
+    if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.01) {
+      console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${totalAmountAfterPromo}`);
+      return res.status(400).json({ 
+        message: 'Total amount does not match calculated amount',
+        expected: totalAmountAfterPromo,
+        submitted: totalAmount
+      });
     }
-    console.log('📍 Formatted address:', formattedDeliveryAddress);
 
-    // 🧠 5. Traiter les items
-    const formattedItems = items.map(item => ({
-      product: item.productId || item.product || null, // Convertir productId en product
-      name: item.name,
-      price: item.price,
-      quantity: item.quantity,
-    }));
+    // 11. Calculer le solde plateforme
+    const platformSolde = (p2Total - p1Total) + finalDeliveryFee + appFee - promoDiscount;
+    console.log(`🧮 Platform solde: (${p2Total} - ${p1Total}) + ${finalDeliveryFee} + ${appFee} - ${promoDiscount} = ${platformSolde}`);
 
-    // 🧠 6. Convertir la méthode de paiement
-    console.log('💳 Original payment method:', paymentMethod);
-    let formattedPaymentMethod = paymentMethod;
-    if (paymentMethod === 'card') {
-      formattedPaymentMethod = 'online';
-    }
-    console.log('💳 Formatted payment method:', formattedPaymentMethod);
-
-    // 🧠 7. Créer la commande
-    const orderToCreate = {
+    // 12. Créer la commande
+    const orderData = {
       client,
       provider,
       items: formattedItems,
-      deliveryAddress: formattedDeliveryAddress,
-      paymentMethod: formattedPaymentMethod,
-      totalAmount: finalAmount,
-      promo: appliedPromo?._id || null,
-      // Champs optionnels pour la compatibilité frontend
-      deliveryFee: deliveryFee || 0,
-      subtotal: subtotal || 0,
+      deliveryAddress,
+      paymentMethod: paymentMethod === 'card' ? 'online' : paymentMethod,
+      totalAmount,
+      clientProductsPrice: p2Total,
+      restaurantPayout: p1Total,
+      deliveryFee: finalDeliveryFee,
+      appFee,
+      platformSolde,
+      p1Total,
+      p2Total,
+      finalAmount: totalAmountAfterPromo,
+      status: 'pending',
+      zone: zoneId || null,
+      distance: distance || null,
+      appliedPromo: appliedPromo ? appliedPromo._id : null,
+      // Champs optionnels pour compatibilité
+      promo: appliedPromo ? appliedPromo._id : null,
       cardInfo: cardInfo || undefined,
-      // Calculer platformSolde pour éviter les erreurs undefined
-      platformSolde: clientSubtotal - restaurantSubtotal + (deliveryFee || 0) + (providerData.type === 'restaurant' ? 0 : 1.5),
+      subtotal: subtotal || p2Total,
     };
-    console.log('💾 Creating order with data:', orderToCreate);
 
-    const createdOrder = await Order.create(orderToCreate);
-    console.log('✅ Order created successfully:', { id: createdOrder._id, status: createdOrder.status, paymentMethod: createdOrder.paymentMethod });
+    console.log('💾 Creating order with data:', orderData);
+
+    const createdOrder = await Order.create(orderData);
+    console.log('✅ Order created successfully:', { 
+      id: createdOrder._id, 
+      status: createdOrder.status, 
+      paymentMethod: createdOrder.paymentMethod,
+      platformSolde: createdOrder.platformSolde
+    });
 
     res.status(201).json({
-      message: appliedPromo
-        ? `Promo "${appliedPromo.name}" appliquée !`
+      message: appliedPromo 
+        ? `Promo "${appliedPromo.name}" appliquée !` 
         : 'Commande créée sans promo',
-      orderData,
+      order: {
+        ...createdOrder.toObject(),
+        promoName: appliedPromo ? appliedPromo.name : null,
+        promoDiscount: promoDiscount,
+        breakdown: {
+          products: p2Total,
+          delivery: finalDeliveryFee,
+          appFee: appFee,
+          promoDiscount: promoDiscount,
+          total: totalAmountAfterPromo
+        }
+      }
     });
+
   } catch (error) {
     console.error('❌ Error creating order:', error);
     console.error('Error details:', {
@@ -174,7 +252,6 @@ exports.createOrder = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
-
 
 // @desc    Get order history for a client
 // @route   GET /api/orders/user/:id
@@ -333,7 +410,7 @@ exports.assignOrder = async (req, res) => {
         },
         details: {
           montantClient: formattedOrder.finalAmount,
-          montantRestaurant: (formattedOrder.total * (1 - (formattedOrder.provider.csRPercent || 5) / 100)).toFixed(3),
+          montantRestaurant: formattedOrder.restaurantPayout,
           soldePlateforme: formattedOrder.solde
         }
       }
@@ -372,10 +449,10 @@ exports.updateOrderStatus = async (req, res) => {
 // @access  Private (superAdmin)
 exports.getOrdersSummary = async (req, res) => {
   try {
-    // 1️⃣ Récupérer toutes les commandes
+    // 1. Récupérer toutes les commandes
     const orders = await Order.find().populate('promo');
 
-    // 2️⃣ Calculs
+    // 2. Calculs de base
     const totalOrders = orders.length;
     const promoOrders = orders.filter(o => o.promo).length;
     const noPromoOrders = totalOrders - promoOrders;
@@ -386,7 +463,21 @@ exports.getOrdersSummary = async (req, res) => {
       .reduce((sum, o) => sum + o.totalAmount, 0);
     const normalRevenue = totalRevenue - promoRevenue;
 
-    // 3️⃣ Détails par promo
+    // 3. Détails par catégorie
+    const categoryStats = {
+      restaurant: { count: 0, revenue: 0, solde: 0 },
+      course: { count: 0, revenue: 0, solde: 0 },
+      pharmacy: { count: 0, revenue: 0, solde: 0 }
+    };
+
+    for (const order of orders) {
+      const category = order.items[0]?.deliveryCategory || 'restaurant';
+      categoryStats[category].count += 1;
+      categoryStats[category].revenue += order.totalAmount;
+      categoryStats[category].solde += order.platformSolde || 0;
+    }
+
+    // 4. Détails par promo
     const promoStats = {};
     for (const order of orders) {
       if (order.promo) {
@@ -399,37 +490,25 @@ exports.getOrdersSummary = async (req, res) => {
       }
     }
 
-    // 4️⃣ Calcul des revenus via appFee
-    const appFeeRevenue = await calculateAppFeeRevenue(orders);
+    // 5. Calcul des revenus via appFee et deliveryFee
+    const appFeeRevenue = orders.reduce((sum, o) => sum + (o.appFee || 0), 0);
+    const deliveryFeeRevenue = orders.reduce((sum, o) => sum + (o.deliveryFee || 0), 0);
+    const platformTotalSolde = orders.reduce((sum, o) => sum + (o.platformSolde || 0), 0);
 
     res.json({
       totalOrders,
       promoOrders,
       noPromoOrders,
-      totalRevenue: totalRevenue.toFixed(2),
-      promoRevenue: promoRevenue.toFixed(2),
-      normalRevenue: normalRevenue.toFixed(2),
-      appFeeRevenue: appFeeRevenue.toFixed(2),
+      totalRevenue: totalRevenue.toFixed(3),
+      promoRevenue: promoRevenue.toFixed(3),
+      normalRevenue: normalRevenue.toFixed(3),
+      appFeeRevenue: appFeeRevenue.toFixed(3),
+      deliveryFeeRevenue: deliveryFeeRevenue.toFixed(3),
+      platformTotalSolde: platformTotalSolde.toFixed(3),
+      categoryStats,
       promoStats,
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
-
-// Fonction utilitaire interne
-async function calculateAppFeeRevenue(orders) {
-  let totalAppFee = 0;
-
-  for (const order of orders) {
-    if (order.promo && order.promo.overrideAppFee != null) {
-      totalAppFee += order.promo.overrideAppFee;
-    } else {
-      // Use category-dependent appFee
-      const provider = await Provider.findById(order.provider);
-      const categoryAppFee = provider && provider.type === 'restaurant' ? 0 : 1.5;
-      totalAppFee += categoryAppFee;
-    }
-  }
-  return totalAppFee;
-}
