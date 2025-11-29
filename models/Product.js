@@ -1,4 +1,4 @@
-// models/Product.js (Updated - add these fields)
+// models/Product.js - Complete delivery system model
 const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema(
@@ -51,7 +51,31 @@ const productSchema = new mongoose.Schema(
         required: false,
       },
     ],
-    // ADD THESE NEW FIELDS
+    // COMMISSION SYSTEM FIELDS
+    csR: {
+      type: Number,
+      enum: [0, 5, 10],
+      default: 5, // Commission restaurant (0%, 5%, 10%)
+    },
+    csC: {
+      type: Number,
+      enum: [0, 5, 10],
+      default: 0, // Commission client (0%, 5%, 10%)
+    },
+    p1: {
+      type: Number,
+      default: 0, // Prix payout restaurant (P * (1 - csR/100))
+    },
+    p2: {
+      type: Number,
+      default: 0, // Prix client (P * (1 + csC/100))
+    },
+    // DELIVERY CATEGORY
+    deliveryCategory: {
+      type: String,
+      enum: ['restaurant', 'course', 'pharmacy'],
+      default: 'restaurant',
+    },
     availability: {
       type: Boolean,
       default: true,
@@ -61,6 +85,21 @@ const productSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// PRE-SAVE HOOK: Calculate P1 and P2 automatically
+productSchema.pre('save', function(next) {
+  const P = this.price || 0;
+  const csR = this.csR || 0;
+  const csC = this.csC || 0;
+  
+  // Calculate P1 (payout restaurant)
+  this.p1 = P * (1 - csR / 100);
+  
+  // Calculate P2 (prix client)
+  this.p2 = P * (1 + csC / 100);
+  
+  next();
+});
 
 // Indexes
 productSchema.index({ name: 1 });

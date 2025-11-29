@@ -79,6 +79,263 @@ exports.getDashboardStats = async (req, res) => {
   }
 };
 
+// @desc    Get platform balance (solde total plateforme)
+// @route   GET /api/dashboard/platform-balance
+// @access  Private (Super Admin only)
+exports.getPlatformBalance = async (req, res) => {
+  try {
+    const { startDate, endDate, category } = req.query;
+    
+    let matchStage = { status: { $in: ['delivered', 'completed'] } };
+    
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
+      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
+    }
+    
+    if (category) {
+      matchStage['items.deliveryCategory'] = category;
+    }
+
+    const result = await Order.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      }
+    ]);
+
+    const balance = result.length > 0 ? result[0] : {
+      totalSolde: 0,
+      totalOrders: 0,
+      totalRevenue: 0,
+      totalPayout: 0,
+      totalDeliveryFee: 0,
+      totalAppFee: 0
+    };
+
+    res.status(200).json({
+      totalSolde: balance.totalSolde.toFixed(3),
+      totalOrders: balance.totalOrders,
+      totalRevenue: balance.totalRevenue.toFixed(3),
+      totalPayout: balance.totalPayout.toFixed(3),
+      totalDeliveryFee: balance.totalDeliveryFee.toFixed(3),
+      totalAppFee: balance.totalAppFee.toFixed(3),
+      breakdown: {
+        commissionPlateforme: (balance.totalRevenue - balance.totalPayout).toFixed(3),
+        fraisLivraison: balance.totalDeliveryFee.toFixed(3),
+        fraisApplication: balance.totalAppFee.toFixed(3)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching platform balance:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération du solde plateforme',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Get deliverer balance (solde par livreur)
+// @route   GET /api/dashboard/deliverer-balance
+// @access  Private (Super Admin only)
+exports.getDelivererBalance = async (req, res) => {
+  try {
+    const { delivererId, startDate, endDate } = req.query;
+    
+    let matchStage = {
+      status: { $in: ['delivered', 'completed'] },
+      deliveryDriver: { $ne: null }
+    };
+    
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
+      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
+    }
+    
+    if (delivererId) {
+      matchStage.deliveryDriver = delivererId;
+    }
+
+    const result = await Order.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: '$deliveryDriver',
+          totalSolde: { $sum: '$platformSolde' },
+          totalOrders: { $sum: 1 },
+          totalRevenue: { $sum: '$clientProductsPrice' },
+          totalPayout: { $sum: '$restaurantPayout' },
+          totalDeliveryFee: { $sum: '$deliveryFee' },
+          totalAppFee: { $sum: '$appFee' }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'deliverer'
+        }
+      },
+      {
+        $unwind: '$deliverer'
+      },
+      {
+        $project: {
+          delivererId: '$_id',
+          delivererName: { $concat: ['$deliverer.firstName', ' ', '$deliverer.lastName'] },
+          totalSolde: 1,
+          totalOrders: 1,
+          totalRevenue: 1,
+          totalPayout: 1,
+          totalDeliveryFee: 1,
+          totalAppFee: 1
+        }
+      },
+      { $sort: { totalSolde: -1 } }
+    ]);
+
+    // Si on demande un livreur spécifique, retourner un seul résultat
+    if (delivererId && result.length > 0) {
+      const deliverer = result[0];
+      res.status(200).json({
+        delivererId: deliverer.delivererId,
+        delivererName: deliverer.delivererName,
+        totalSolde: deliverer.totalSolde.toFixed(3),
+        totalOrders: deliverer.totalOrders,
+        totalRevenue: deliverer.totalRevenue.toFixed(3),
+        totalPayout: deliverer.totalPayout.toFixed(3),
+        totalDeliveryFee: deliverer.totalDeliveryFee.toFixed(3),
+        totalAppFee: deliverer.totalAppFee.toFixed(3),
+        breakdown: {
+          commissionPlateforme: (deliverer.totalRevenue - deliverer.totalPayout).toFixed(3),
+          fraisLivraison: deliverer.totalDeliveryFee.toFixed(3),
+          fraisApplication: deliverer.totalAppFee.toFixed(3)
+        }
+      });
+    } else {
+      // Sinon retourner la liste de tous les livreurs
+      const formattedResult = result.map(deliverer => ({
+        delivererId: deliverer.delivererId,
+        delivererName: deliverer.delivererName,
+        totalSolde: deliverer.totalSolde.toFixed(3),
+        totalOrders: deliverer.totalOrders,
+        totalRevenue: deliverer.totalRevenue.toFixed(3),
+        totalPayout: deliverer.totalPayout.toFixed(3),
+        totalDeliveryFee: deliverer.totalDeliveryFee.toFixed(3),
+        totalAppFee: deliverer.totalAppFee.toFixed(3)
+      }));
+      
+      res.status(200).json(formattedResult);
+    }
+
+  } catch (error) {
+    console.error('Error fetching deliverer balance:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération du solde livreurs',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Get deliverer details with orders
+// @route   GET /api/dashboard/deliverer/:id/orders
+// @access  Private (Super Admin only)
+exports.getDelivererOrders = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { startDate, endDate } = req.query;
+    
+    let matchStage = {
+      deliveryDriver: id,
+      status: { $in: ['delivered', 'completed'] }
+    };
+    
+    if (startDate || endDate) {
+      matchStage.createdAt = {};
+      if (startDate) matchStage.createdAt.$gte = new Date(startDate);
+      if (endDate) matchStage.createdAt.$lte = new Date(endDate);
+    }
+
+    const orders = await Order.find(matchStage)
+      .populate('client', 'firstName lastName phoneNumber')
+      .populate('provider', 'name type phone address')
+      .sort({ createdAt: -1 });
+
+    const summary = orders.reduce((acc, order) => {
+      acc.totalSolde += order.platformSolde || 0;
+      acc.totalOrders += 1;
+      acc.totalRevenue += order.clientProductsPrice || 0;
+      acc.totalPayout += order.restaurantPayout || 0;
+      acc.totalDeliveryFee += order.deliveryFee || 0;
+      acc.totalAppFee += order.appFee || 0;
+      return acc;
+    }, {
+      totalSolde: 0,
+      totalOrders: 0,
+      totalRevenue: 0,
+      totalPayout: 0,
+      totalDeliveryFee: 0,
+      totalAppFee: 0
+    });
+
+    const formattedOrders = orders.map(order => ({
+      id: order._id,
+      orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: {
+        name: `${order.client.firstName} ${order.client.lastName}`,
+        phone: order.client.phoneNumber
+      },
+      provider: {
+        name: order.provider.name,
+        type: order.provider.type
+      },
+      total: order.totalAmount,
+      solde: (order.platformSolde || 0).toFixed(3),
+      status: order.status,
+      deliveryAddress: order.deliveryAddress,
+      createdAt: order.createdAt,
+      breakdown: {
+        products: order.clientProductsPrice,
+        delivery: order.deliveryFee,
+        appFee: order.appFee,
+        solde: order.platformSolde
+      }
+    }));
+
+    res.status(200).json({
+      delivererId: id,
+      summary: {
+        totalSolde: summary.totalSolde.toFixed(3),
+        totalOrders: summary.totalOrders,
+        totalRevenue: summary.totalRevenue.toFixed(3),
+        totalPayout: summary.totalPayout.toFixed(3),
+        totalDeliveryFee: summary.totalDeliveryFee.toFixed(3),
+        totalAppFee: summary.totalAppFee.toFixed(3)
+      },
+      orders: formattedOrders
+    });
+
+  } catch (error) {
+    console.error('Error fetching deliverer orders:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des commandes du livreur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
 // @desc    Get recent orders
 // @route   GET /api/dashboard/recent-orders
 // @access  Private (Super Admin only)
@@ -118,30 +375,20 @@ exports.getRecentOrders = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.getActiveDeliverers = async (req, res) => {
   try {
-    // For now, return mock data since deliverer role might not be implemented yet
-    // In a real implementation, you would fetch actual deliverer data
-    const activeDeliverers = [
-      {
-        id: '1',
-        name: 'Ahmed Ben Ali',
-        orders: 5,
-        status: 'active'
-      },
-      {
-        id: '2',
-        name: 'Mohamed Triki',
-        orders: 3,
-        status: 'active'
-      },
-      {
-        id: '3',
-        name: 'Fatma Gharbi',
-        orders: 7,
-        status: 'active'
-      }
-    ];
+    const activeDeliverers = await User.find({
+      role: 'deliverer',
+      status: 'active'
+    }).select('firstName lastName phoneNumber location');
 
-    res.status(200).json(activeDeliverers);
+    const formattedDeliverers = activeDeliverers.map(deliverer => ({
+      id: deliverer._id,
+      name: `${deliverer.firstName} ${deliverer.lastName}`,
+      phone: deliverer.phoneNumber,
+      location: deliverer.location,
+      status: 'active'
+    }));
+
+    res.status(200).json(formattedDeliverers);
 
   } catch (error) {
     console.error('Error fetching active deliverers:', error);
