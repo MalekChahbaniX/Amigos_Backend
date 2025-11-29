@@ -90,11 +90,20 @@ exports.konnectWebhook = async (req, res) => {
       // Create the actual order if payment is successful
       if (transaction.details.orderDetails) {
         console.log('🛍️ Creating order from successful payment...');
+        
+        // Calculate platformSolde for the order
+        const orderDetails = transaction.details.orderDetails;
+        const clientSubtotal = orderDetails.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const restaurantSubtotal = clientSubtotal * 0.95; // Assuming 5% commission for restaurants
+        const deliveryFee = orderDetails.deliveryFee || 0;
+        const appFee = 1.5; // Default app fee
+        
         const order = await Order.create({
-          ...transaction.details.orderDetails,
+          ...orderDetails,
           paymentMethod: 'card',
           paymentStatus: 'paid',
           transactionId: transaction._id,
+          platformSolde: clientSubtotal - restaurantSubtotal + deliveryFee + appFee,
         });
         console.log('✅ Order created:', order._id);
         

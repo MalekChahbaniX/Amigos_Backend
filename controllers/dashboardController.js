@@ -27,7 +27,7 @@ exports.getDashboardStats = async (req, res) => {
       status: 'active'
     });
 
-    // Calculate today's revenue (sum of all orders today)
+    // Calculate today's revenue (sum of client-paid amounts)
     const todayRevenueResult = await Order.aggregate([
       {
         $match: {
@@ -38,18 +38,36 @@ exports.getDashboardStats = async (req, res) => {
       {
         $group: {
           _id: null,
-          total: { $sum: '$totalAmount' }
+          total: { $sum: '$clientProductsPrice' }
+        }
+      }
+    ]);
+
+    // Calculate platform solde (revenue - restaurant payout + fees)
+    const todaySoldeResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startOfDay, $lte: endOfDay },
+          status: { $in: ['delivered', 'completed'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$platformSolde' }
         }
       }
     ]);
 
     const todayRevenue = todayRevenueResult.length > 0 ? todayRevenueResult[0].total.toFixed(2) : '0.00';
+    const todaySolde = todaySoldeResult.length > 0 ? todaySoldeResult[0].total.toFixed(2) : '0.00';
 
     res.status(200).json({
       todayOrders,
       activeClients,
       activeDeliverers,
-      todayRevenue
+      todayRevenue,
+      todaySolde
     });
 
   } catch (error) {
@@ -75,7 +93,8 @@ exports.getRecentOrders = async (req, res) => {
     const formattedOrders = recentOrders.map(order => ({
       id: order.orderNumber || order._id.toString(),
       client: order.clientId ? `${order.clientId.firstName} ${order.clientId.lastName}` : 'Client inconnu',
-      total: `${order.totalAmount} DT`,
+      total: `${order.clientProductsPrice || order.totalAmount} DT`,
+      solde: `${order.platformSolde || 0} DT`,
       status: order.status,
       time: new Date(order.createdAt).toLocaleTimeString('fr-FR', {
         hour: '2-digit',
