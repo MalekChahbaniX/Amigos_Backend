@@ -18,10 +18,6 @@ exports.createOrder = async (req, res) => {
   const { client, provider, items, deliveryAddress, paymentMethod, totalAmount, deliveryFee, subtotal, cardInfo } = req.body;
 
   try {
-    // 🧠 1. Charger paramètres globaux
-    const appSetting = await AppSetting.findOne() || { appFee: 1.0 };
-    console.log('⚙️ App settings loaded:', { appFee: appSetting.appFee });
-
     // 🧠 2. Charger provider (pour connaître son type : restaurant, course, etc.)
     console.log('🔍 Fetching provider:', provider);
     const providerData = await Provider.findById(provider);
@@ -29,7 +25,33 @@ exports.createOrder = async (req, res) => {
       console.log('❌ Provider not found:', provider);
       return res.status(404).json({ message: 'Provider not found' });
     }
-    console.log('✅ Provider loaded:', { id: providerData._id, name: providerData.name, type: providerData.type });
+    console.log('✅ Provider loaded:', { id: providerData._id, name: providerData.name, type: providerData.type, csR: providerData.csRPercent, csC: providerData.csCPercent });
+
+    // 🧠 Calculer les sous-totaux P1 (restaurant) et P2 (client) selon commissions
+    console.log('💰 Calculating pricing with commissions...');
+    let clientSubtotal = 0;
+    let restaurantSubtotal = 0;
+    const csR = (providerData.csRPercent || 5) / 100; // default 5%
+    const csC = (providerData.csCPercent || 0) / 100; // default 0%
+    if (!items || !Array.isArray(items)) {
+      return res.status(400).json({ message: 'Invalid or missing items array' });
+    }
+    for (const item of items) {
+      const P = item.price || 0;
+      const qty = item.quantity || 1;
+      const P1 = P * (1 - csR); // restaurant payout
+      const P2 = P * (1 + csC); // client price
+      clientSubtotal += P2 * qty;
+      restaurantSubtotal += P1 * qty;
+      console.log(`Item ${item.name || 'unknown'}: P=${P}, qty=${qty}, P1=${P1}, P2=${P2}`);
+    }
+    console.log(`🧮 Subtotals: client=${clientSubtotal}, restaurant=${restaurantSubtotal}`);
+
+    // ✅ Valider que le total soumis correspond au sous-total client (tolérance 0.01)
+    if (Math.abs(totalAmount - clientSubtotal) > 0.01) {
+      console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${clientSubtotal}`);
+      return res.status(400).json({ message: 'Total amount does not match calculated client subtotal' });
+    }
 
     // 🧠 3. Vérifier promo active applicable
     console.log('🎁 Checking for active promo...');
@@ -46,7 +68,7 @@ exports.createOrder = async (req, res) => {
       totalAmount <= promo.maxAmount
     ) {
       // ✅ Promo applicable
-      const appliedAppFee = promo.overrideAppFee ?? appSetting.appFee;
+      const appliedAppFee = promo.overrideAppFee ?? (providerData.type === 'restaurant' ? 0 : 1.5);
       finalAmount = appliedAppFee; // le client paie juste les frais app
       appliedPromo = promo;
 
@@ -54,12 +76,38 @@ exports.createOrder = async (req, res) => {
       promo.ordersUsed += 1;
       await promo.save();
     } else {
-      // ❌ Pas de promo → montant normal + frais app
-      finalAmount = totalAmount + appSetting.appFee;
-      console.log('❌ No promo applied, final amount:', finalAmount);
+      // ❌ Pas de promo → montant normal + frais app (category-dependent)
+      const categoryAppFee = providerData.type === 'restaurant' ? 0 : 1.5;
+      finalAmount = totalAmount + categoryAppFee;
+      console.log('❌ No promo applied, final amount:', finalAmount, 'appFee:', categoryAppFee);
     }
 
-    // 🧠 4. Traiter l'adresse de livraison
+    // 🧠 4. Créer la commande avec les champs solde et prix détaillés
+    const orderData = new Order({
+      client,
+      provider,
+      items,
+      deliveryAddress,
+      paymentMethod,
+      deliveryFee: deliveryFee || 0,
+      subtotal: subtotal || clientSubtotal,
+      totalAmount,
+      clientProductsPrice: clientSubtotal,
+      restaurantPayout: restaurantSubtotal,
+      appFee: providerData.type === 'restaurant' ? 0 : 1.5,
+      platformSolde: clientSubtotal - restaurantSubtotal + (deliveryFee || 0) + (providerData.type === 'restaurant' ? 0 : 1.5),
+      status: 'pending',
+      finalAmount,
+      appliedPromo: appliedPromo ? appliedPromo._id : null,
+    });
+    console.log('📦 Order created with solde:', orderData.platformSolde);
+
+    // Sauvegarder
+    await orderData.save();
+    await orderData.populate('provider');
+    console.log('✅ Order saved and populated');
+
+    // 🧠 5. Traiter l'adresse de livraison
     console.log('📍 Processing delivery address:', deliveryAddress);
     let formattedDeliveryAddress = {};
     if (typeof deliveryAddress === 'string') {
@@ -103,17 +151,19 @@ exports.createOrder = async (req, res) => {
       deliveryFee: deliveryFee || 0,
       subtotal: subtotal || 0,
       cardInfo: cardInfo || undefined,
+      // Calculer platformSolde pour éviter les erreurs undefined
+      platformSolde: clientSubtotal - restaurantSubtotal + (deliveryFee || 0) + (providerData.type === 'restaurant' ? 0 : 1.5),
     };
     console.log('💾 Creating order with data:', orderToCreate);
 
-    const order = await Order.create(orderToCreate);
-    console.log('✅ Order created successfully:', { id: order._id, status: order.status, paymentMethod: order.paymentMethod });
+    const createdOrder = await Order.create(orderToCreate);
+    console.log('✅ Order created successfully:', { id: createdOrder._id, status: createdOrder.status, paymentMethod: createdOrder.paymentMethod });
 
     res.status(201).json({
       message: appliedPromo
         ? `Promo "${appliedPromo.name}" appliquée !`
         : 'Commande créée sans promo',
-      order,
+      orderData,
     });
   } catch (error) {
     console.error('❌ Error creating order:', error);
@@ -163,19 +213,55 @@ exports.getOrdersBySuperAdmin = async (req, res) => {
   }
 };
 
-// @desc    Get available orders for superAdmins
+// @desc    Get available orders for superAdmins (livreurs)
 // @route   GET /api/orders/superadmin/available
 // @access  Private (superAdmin)
 exports.getAvailableOrders = async (req, res) => {
   try {
-    const availableOrders = await Order.find({ status: 'pending', deliveryDriver: null });
-    res.json(availableOrders);
+    const availableOrders = await Order.find({ status: 'pending', deliveryDriver: null })
+      .populate('client', 'firstName lastName phoneNumber location')
+      .populate('provider', 'name type phone address')
+      .sort({ createdAt: -1 });
+    
+    // Format available orders with detailed information for livreurs
+    const formattedOrders = availableOrders.map(order => ({
+      id: order._id,
+      orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: {
+        id: order.client._id,
+        name: `${order.client.firstName} ${order.client.lastName}`,
+        phone: order.client.phoneNumber,
+        location: order.client.location || {},
+      },
+      provider: {
+        id: order.provider._id,
+        name: order.provider.name,
+        type: order.provider.type,
+        phone: order.provider.phone,
+        address: order.provider.address,
+      },
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+      })),
+      total: order.totalAmount,
+      solde: order.platformSolde ? order.platformSolde.toFixed(3) : '0.000',
+      status: order.status,
+      deliveryAddress: order.deliveryAddress,
+      paymentMethod: order.paymentMethod,
+      finalAmount: order.finalAmount,
+      createdAt: order.createdAt,
+      platformSolde: order.platformSolde,
+    }));
+    
+    res.json(formattedOrders);
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
-// @desc    Assign an order to a superAdmin
+// @desc    Assign an order to a superAdmin (livreur)
 // @route   PUT /api/orders/assign/:orderId
 // @access  Private (superAdmin)
 exports.assignOrder = async (req, res) => {
@@ -183,21 +269,77 @@ exports.assignOrder = async (req, res) => {
   const { deliveryDriverId } = req.body;
 
   try {
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId)
+      .populate('client', 'firstName lastName phoneNumber location')
+      .populate('provider', 'name type phone address');
+    
     if (!order) {
-      return res.status(404).json({ message: 'Order not found' });
+      return res.status(404).json({ message: 'Commande non trouvée' });
     }
     if (order.status !== 'pending') {
-      return res.status(400).json({ message: 'Order cannot be assigned in its current state' });
+      return res.status(400).json({ message: 'La commande ne peut pas être assignée dans son état actuel' });
     }
 
     order.deliveryDriver = deliveryDriverId;
     order.status = 'accepted';
     await order.save();
 
-    res.json({ message: 'Order assigned successfully', order });
+    // Return complete order details for the livreur
+    const formattedOrder = {
+      id: order._id,
+      orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: {
+        id: order.client._id,
+        name: `${order.client.firstName} ${order.client.lastName}`,
+        phone: order.client.phoneNumber,
+        location: order.client.location || {},
+      },
+      provider: {
+        id: order.provider._id,
+        name: order.provider.name,
+        type: order.provider.type,
+        phone: order.provider.phone,
+        address: order.provider.address,
+      },
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+      })),
+      total: order.totalAmount,
+      solde: order.platformSolde ? order.platformSolde.toFixed(3) : '0.000',
+      status: order.status,
+      deliveryAddress: order.deliveryAddress,
+      paymentMethod: order.paymentMethod,
+      finalAmount: order.finalAmount,
+      createdAt: order.createdAt,
+      platformSolde: order.platformSolde,
+    };
+
+    res.json({
+      message: 'Commande assignée avec succès',
+      order: formattedOrder,
+      livraison: {
+        clientContact: {
+          nom: formattedOrder.client.name,
+          telephone: formattedOrder.client.phone,
+          adresse: formattedOrder.deliveryAddress,
+          coordonnees: formattedOrder.client.location
+        },
+        restaurantContact: {
+          nom: formattedOrder.provider.name,
+          telephone: formattedOrder.provider.phone,
+          adresse: formattedOrder.provider.address
+        },
+        details: {
+          montantClient: formattedOrder.finalAmount,
+          montantRestaurant: (formattedOrder.total * (1 - (formattedOrder.provider.csRPercent || 5) / 100)).toFixed(3),
+          soldePlateforme: formattedOrder.solde
+        }
+      }
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
@@ -283,10 +425,10 @@ async function calculateAppFeeRevenue(orders) {
     if (order.promo && order.promo.overrideAppFee != null) {
       totalAppFee += order.promo.overrideAppFee;
     } else {
-      // Charger appFee global une seule fois si besoin
-      const { default: AppSetting } = await import('../models/AppSetting.js');
-      const globalSetting = await AppSetting.findOne() || { appFee: 1.0 };
-      totalAppFee += globalSetting.appFee;
+      // Use category-dependent appFee
+      const provider = await Provider.findById(order.provider);
+      const categoryAppFee = provider && provider.type === 'restaurant' ? 0 : 1.5;
+      totalAppFee += categoryAppFee;
     }
   }
   return totalAppFee;

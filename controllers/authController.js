@@ -477,3 +477,208 @@ exports.loginSuperAdmin = async (req, res) => {
     });
   }
 };
+
+// @desc    Enregistrer un nouveau livreur
+// @route   POST /api/auth/register-deliverer
+// @access  Public
+exports.registerDeliverer = async (req, res) => {
+  const { phoneNumber, firstName, lastName, vehicle, email } = req.body;
+
+  try {
+    console.log('=== DEBUT REGISTER DELIVERER ===');
+    console.log('Création livreur pour:', phoneNumber, firstName, lastName);
+
+    // Validation des paramètres requis
+    if (!phoneNumber || !firstName || !lastName) {
+      return res.status(400).json({
+        message: 'Numéro de téléphone, prénom et nom sont requis pour le livreur'
+      });
+    }
+
+    // Validation du format du numéro de téléphone
+    const phoneRegex = /^\+216\d{8}$/;
+    if (!phoneRegex.test(phoneNumber)) {
+      return res.status(400).json({
+        message: 'Format de numéro de téléphone invalide. Format requis: +216XXXXXXXX'
+      });
+    }
+
+    // Vérifier si un livreur existe déjà avec ce numéro
+    const existingUser = await User.findOne({ phoneNumber });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Un compte existe déjà avec ce numéro de téléphone' });
+    }
+
+    // Créer le livreur
+    const deliverer = await User.create({
+      phoneNumber,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      email: email || null,
+      vehicle: vehicle || '',
+      role: 'deliverer',
+      isVerified: true, // Le livreur est automatiquement vérifié
+      status: 'active'
+    });
+
+    console.log('Livreur créé:', deliverer._id);
+
+    if (deliverer) {
+      res.status(201).json({
+        _id: deliverer._id,
+        firstName: deliverer.firstName,
+        lastName: deliverer.lastName,
+        phoneNumber: deliverer.phoneNumber,
+        email: deliverer.email,
+        vehicle: deliverer.vehicle,
+        role: deliverer.role,
+        isVerified: deliverer.isVerified,
+        status: deliverer.status,
+        token: generateToken(deliverer._id),
+        message: 'Compte livreur créé avec succès'
+      });
+    } else {
+      res.status(400).json({ message: 'Données livreur invalides' });
+    }
+  } catch (error) {
+    console.error('=== ERREUR REGISTER DELIVERER ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la création du livreur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Connecter un livreur
+// @route   POST /api/auth/login-deliverer
+// @access  Public
+exports.loginDeliverer = async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  try {
+    console.log('=== DEBUT LOGIN DELIVERER ===');
+    console.log('Tentative de connexion livreur pour:', phoneNumber);
+
+    // Validation du numéro de téléphone
+    if (!phoneNumber || !phoneNumber.startsWith('+216')) {
+      console.log('Numéro invalide:', phoneNumber);
+      return res.status(400).json({ message: 'Numéro de téléphone invalide' });
+    }
+
+    // Vérifier si le livreur existe
+    let deliverer = await User.findOne({ phoneNumber, role: 'deliverer' });
+    console.log('Livreur trouvé:', deliverer ? 'Oui' : 'Non');
+
+    if (!deliverer) {
+      // Créer un nouveau livreur s'il n'existe pas
+      console.log('Création d\'un nouveau livreur pour:', phoneNumber);
+      try {
+        deliverer = await User.create({
+          phoneNumber,
+          firstName: '', // Sera rempli plus tard
+          lastName: '',
+          role: 'deliverer',
+          isVerified: false,
+          status: 'pending'
+        });
+        console.log('Nouveau livreur créé avec ID:', deliverer._id);
+      } catch (createError) {
+        console.error('Erreur création livreur:', createError);
+        return res.status(500).json({ message: 'Erreur lors de la création du compte livreur' });
+      }
+    }
+
+    // Vérifier le statut de vérification
+    console.log('Statut de vérification:', deliverer.isVerified);
+
+    // Mettre à jour le statut du livreur s'il est inactif
+    if (deliverer.status !== 'active') {
+      deliverer.status = 'active';
+      await deliverer.save();
+      console.log('Statut du livreur mis à jour vers actif');
+    }
+
+    // Le livreur est automatiquement vérifié et connecté directement
+    console.log('Connexion livreur réussie');
+    return res.status(200).json({
+      _id: deliverer._id,
+      firstName: deliverer.firstName,
+      lastName: deliverer.lastName,
+      phoneNumber: deliverer.phoneNumber,
+      email: deliverer.email,
+      vehicle: deliverer.vehicle,
+      role: deliverer.role,
+      isVerified: true,
+      status: 'active',
+      token: generateToken(deliverer._id),
+      message: 'Connexion livreur réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR LOGIN DELIVERER ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Vérifier le livreur (maintenu pour compatibilité mais sans OTP)
+// @route   POST /api/auth/verify-deliverer
+// @access  Public
+exports.verifyDelivererOTP = async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  try {
+    console.log('=== DEBUT VERIFICATION DELIVERER ===');
+    console.log('Vérification livreur pour:', phoneNumber);
+
+    // Validation du numéro de téléphone
+    if (!phoneNumber) {
+      return res.status(400).json({ message: 'Numéro de téléphone requis' });
+    }
+
+    // Trouver le livreur
+    const deliverer = await User.findOne({
+      phoneNumber,
+      role: 'deliverer'
+    });
+
+    if (!deliverer) {
+      return res.status(404).json({ message: 'Livreur non trouvé' });
+    }
+
+    // Mettre à jour le statut si nécessaire
+    if (deliverer.status !== 'active') {
+      deliverer.status = 'active';
+      await deliverer.save();
+      console.log('Statut du livreur mis à jour vers actif');
+    }
+
+    console.log('Vérification livreur réussie pour:', phoneNumber);
+
+    res.status(200).json({
+      _id: deliverer._id,
+      firstName: deliverer.firstName,
+      lastName: deliverer.lastName,
+      phoneNumber: deliverer.phoneNumber,
+      email: deliverer.email,
+      vehicle: deliverer.vehicle,
+      role: deliverer.role,
+      isVerified: true,
+      status: 'active',
+      token: generateToken(deliverer._id),
+      message: 'Vérification livreur réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR VERIFICATION DELIVERER ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};

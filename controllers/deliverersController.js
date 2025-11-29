@@ -38,6 +38,7 @@ exports.getDeliverers = async (req, res) => {
       vehicle: 'Moto', // TODO: Add vehicle field to User model when needed
       currentOrders: 0, // TODO: Get from active orders when implemented
       totalDeliveries: 0, // TODO: Calculate from completed orders when implemented
+      totalSolde: 0, // TODO: Calculate sum of platformSolde from delivered orders
       rating: 4.5, // TODO: Calculate from order ratings when implemented
       isActive: deliverer.status === 'active',
       location: 'Centre Ville' // TODO: Add location field to User model when needed
@@ -86,6 +87,7 @@ exports.getDelivererById = async (req, res) => {
       vehicle: 'Moto', // TODO: Add vehicle field when needed
       currentOrders: 0,
       totalDeliveries: 0,
+      totalSolde: 0,
       rating: 4.5,
       isActive: deliverer.status === 'active',
       location: deliverer.location?.address || 'Centre Ville'
@@ -236,4 +238,114 @@ exports.deleteDeliverer = async (req, res) => {
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
+}
+// @desc    Get deliverer earnings (total solde from delivered orders)
+// @route   GET /api/deliverers/:id/earnings
+// @access  Private (Super Admin only)
+exports.getDelivererEarnings = async (req, res) => {
+  try {
+    const delivererId = req.params.id;
+    
+    // Validate deliverer exists
+    const deliverer = await User.findOne({
+      _id: delivererId,
+      role: 'deliverer'
+    });
+    
+    if (!deliverer) {
+      return res.status(404).json({ message: 'Livreur non trouvé' });
+    }
+
+    // Calculate total solde from delivered orders
+    const earningsResult = await Order.aggregate([
+      {
+        $match: {
+          deliveryDriver: delivererId,
+          status: { $in: ['delivered', 'completed'] }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSolde: { $sum: '$platformSolde' },
+          orderCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const totalSolde = earningsResult.length > 0 ? earningsResult[0].totalSolde : 0;
+    const orderCount = earningsResult.length > 0 ? earningsResult[0].orderCount : 0;
+
+    res.status(200).json({
+      delivererId,
+      totalSolde: totalSolde.toFixed(3),
+      orderCount,
+      averageSolde: orderCount > 0 ? (totalSolde / orderCount).toFixed(3) : '0.000'
+    });
+
+  } catch (error) {
+    console.error('Error fetching deliverer earnings:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des gains du livreur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 };
+
+// @desc    Get deliverer detailed statistics
+// @route   GET /api/deliverers/:id/stats
+// @access  Private (Super Admin only)
+exports.getDelivererStats = async (req, res) => {
+  try {
+    const delivererId = req.params.id;
+    
+    // Validate deliverer exists
+    const deliverer = await User.findOne({
+      _id: delivererId,
+      role: 'deliverer'
+    });
+    
+    if (!deliverer) {
+      return res.status(404).json({ message: 'Livreur non trouvé' });
+    }
+
+    // Get deliverer stats
+    const statsResult = await Order.aggregate([
+      {
+        $match: {
+          deliveryDriver: delivererId
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Convert to stats object
+    const stats = statsResult.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
+    const totalOrders = statsResult.reduce((sum, item) => sum + item.count, 0);
+
+    res.status(200).json({
+      delivererId,
+      totalOrders,
+      stats,
+      pending: stats.pending || 0,
+      inDelivery: stats.in_delivery || 0,
+      delivered: stats.delivered || 0,
+      cancelled: stats.cancelled || 0
+    });
+
+  } catch (error) {
+    console.error('Error fetching deliverer stats:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des statistiques du livreur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }};

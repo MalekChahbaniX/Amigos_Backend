@@ -40,6 +40,26 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  clientProductsPrice: {
+    type: Number,
+    required: true,
+  },
+  restaurantPayout: {
+    type: Number,
+    required: true,
+  },
+  deliveryFee: {
+    type: Number,
+    default: 0,
+  },
+  appFee: {
+    type: Number,
+    default: 0,
+  },
+  platformSolde: {
+    type: Number,
+    required: true,
+  },
   status: {
     type: String,
     enum: ['pending', 'accepted', 'in_delivery', 'delivered', 'cancelled'],
