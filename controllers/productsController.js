@@ -61,10 +61,16 @@ exports.getProducts = async (req, res) => {
         category: product.category,
         provider: product.provider ? product.provider.name : 'Prestataire inconnu',
         price: product.price,
+        p1: product.p1,
+        p2: product.p2,
+        csR: product.csR,
+        csC: product.csC,
+        deliveryCategory: product.deliveryCategory,
         stock: product.stock || 0,
         status: product.status,
         image: product.image,
-        options: options
+        options: options,
+        availability: product.availability
       };
     });
 
@@ -120,10 +126,16 @@ exports.getProductById = async (req, res) => {
       category: product.category,
       provider: product.provider ? product.provider.name : 'Prestataire inconnu',
       price: product.price,
+      p1: product.p1,
+      p2: product.p2,
+      csR: product.csR,
+      csC: product.csC,
+      deliveryCategory: product.deliveryCategory,
       stock: product.stock || 0,
       status: product.status,
       image: product.image,
-      options: options
+      options: options,
+      availability: product.availability
     };
 
     res.status(200).json(formattedProduct);
@@ -204,18 +216,21 @@ exports.getProductsByProvider = async (req, res) => {
 // @desc Create new product (UPDATED VERSION)
 exports.createProduct = async (req, res) => {
   try {
-    const { 
-      name, 
-      description, 
-      price, 
-      category, 
-      stock, 
-      status, 
-      providerId, 
-      promoId, 
-      image, 
+    const {
+      name,
+      description,
+      price,
+      category,
+      stock,
+      status,
+      providerId,
+      promoId,
+      image,
       optionGroups,  // NEW: Array of optionGroup IDs
       availability,   // NEW
+      csR,            // NEW: Restaurant commission
+      csC,            // NEW: Client commission
+      deliveryCategory // NEW: Delivery category
     } = req.body;
 
     // Validation
@@ -246,7 +261,7 @@ exports.createProduct = async (req, res) => {
       }
     }
 
-    // Create product with optionGroups
+    // Create product with optionGroups and new pricing fields
     const product = await Product.create({
       name,
       description,
@@ -258,6 +273,9 @@ exports.createProduct = async (req, res) => {
       promo: promo ? promo._id : null,
       optionGroups: optionGroups || [],  // Array of ObjectIds
       availability: availability !== false,
+      csR: csR || 5,  // Default to 5% restaurant commission
+      csC: csC || 0,  // Default to 0% client commission
+      deliveryCategory: deliveryCategory || 'restaurant', // Default to restaurant
       ...(image && { image }),
     });
 
@@ -291,6 +309,11 @@ exports.createProduct = async (req, res) => {
         provider: product.provider ? product.provider.name : null,
         promo: product.promo ? product.promo.name : null,
         price: product.price,
+        p1: product.p1,
+        p2: product.p2,
+        csR: product.csR,
+        csC: product.csC,
+        deliveryCategory: product.deliveryCategory,
         stock: product.stock,
         status: product.status,
         image: product.image,
@@ -311,18 +334,21 @@ exports.createProduct = async (req, res) => {
 // @desc Update product (UPDATED VERSION)
 exports.updateProduct = async (req, res) => {
   try {
-    const { 
-      name, 
-      description, 
-      price, 
-      category, 
-      stock, 
-      status, 
-      image, 
-      providerId, 
+    const {
+      name,
+      description,
+      price,
+      category,
+      stock,
+      status,
+      image,
+      providerId,
       promoId,
       optionGroups,  // NEW
       availability,   // NEW
+      csR,            // NEW: Restaurant commission
+      csC,            // NEW: Client commission
+      deliveryCategory // NEW: Delivery category
     } = req.body;
 
     const updateData = {};
@@ -333,6 +359,11 @@ exports.updateProduct = async (req, res) => {
     if (stock !== undefined) updateData.stock = parseInt(stock);
     if (status) updateData.status = status;
     if (image !== undefined) updateData.image = image;
+    
+    // NEW: Update commission settings
+    if (csR !== undefined) updateData.csR = csR;
+    if (csC !== undefined) updateData.csC = csC;
+    if (deliveryCategory) updateData.deliveryCategory = deliveryCategory;
     
     // NEW: Update optionGroups
     if (optionGroups !== undefined) updateData.optionGroups = optionGroups;
@@ -395,6 +426,11 @@ exports.updateProduct = async (req, res) => {
         provider: product.provider ? product.provider.name : null,
         promo: product.promo ? product.promo.name : null,
         price: product.price,
+        p1: product.p1,
+        p2: product.p2,
+        csR: product.csR,
+        csC: product.csC,
+        deliveryCategory: product.deliveryCategory,
         stock: product.stock,
         status: product.status,
         image: product.image,
