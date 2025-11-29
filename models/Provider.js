@@ -52,6 +52,16 @@ const providerSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  csRPercent: {
+    type: Number,
+    enum: [0, 5, 10],
+    default: 5
+  },
+  csCPercent: {
+    type: Number,
+    enum: [0, 5, 10],
+    default: 0
   }
 }, {
   timestamps: true
