@@ -494,15 +494,6 @@ exports.registerDeliverer = async (req, res) => {
         message: 'Numéro de téléphone, prénom et nom sont requis pour le livreur'
       });
     }
-
-    // Validation du format du numéro de téléphone
-    const phoneRegex = /^\+216\d{8}$/;
-    if (!phoneRegex.test(phoneNumber)) {
-      return res.status(400).json({
-        message: 'Format de numéro de téléphone invalide. Format requis: +216XXXXXXXX'
-      });
-    }
-
     // Vérifier si un livreur existe déjà avec ce numéro
     const existingUser = await User.findOne({ phoneNumber });
     if (existingUser) {
@@ -560,12 +551,6 @@ exports.loginDeliverer = async (req, res) => {
     console.log('=== DEBUT LOGIN DELIVERER ===');
     console.log('Tentative de connexion livreur pour:', phoneNumber);
 
-    // Validation du numéro de téléphone
-    if (!phoneNumber || !phoneNumber.startsWith('+216')) {
-      console.log('Numéro invalide:', phoneNumber);
-      return res.status(400).json({ message: 'Numéro de téléphone invalide' });
-    }
-
     // Vérifier si le livreur existe
     let deliverer = await User.findOne({ phoneNumber, role: 'deliverer' });
     console.log('Livreur trouvé:', deliverer ? 'Oui' : 'Non');
@@ -579,7 +564,7 @@ exports.loginDeliverer = async (req, res) => {
           firstName: '', // Sera rempli plus tard
           lastName: '',
           role: 'deliverer',
-          isVerified: false,
+          isVerified: true,
           status: 'pending'
         });
         console.log('Nouveau livreur créé avec ID:', deliverer._id);

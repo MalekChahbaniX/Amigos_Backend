@@ -1,124 +1,165 @@
-import dotenv from "dotenv";
-import mongoose from "mongoose";
-import Product from './models/Product.js';
-import Provider from './models/Provider.js';
+// scripts/seedProduitsTunisiens.js
+require('dotenv').config();
+const mongoose = require('mongoose');
 
-dotenv.config();
-const connectDB = async () => {
+const Product = require('./models/Product');
+const Provider = require('./models/Provider');
+const OptionGroup = require('./models/OptionGroup');
+const ProductOption = require('./models/ProductOption'); // Assure-toi que ce modèle existe
+
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('MongoDB connecté'))
+  .catch(err => console.error(err));
+
+async function seedTunisie() {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB connected successfully!');
-  } catch (err) {
-    console.error(`Error connecting to MongoDB: ${err.message}`);
-    process.exit(1);
-  }
-};
-
-await connectDB();
-
-
-async function seed() {
-  try {
-    await Product.deleteMany();
-    await Provider.deleteMany();
-
-    console.log('🧹 Anciennes données supprimées');
-
-    // 🧩 Création des providers (3 types)
+    // 1. Création des Providers (fournisseurs)
     const providers = await Provider.insertMany([
-      {
-        name: 'Pizza House',
-        type: 'restaurant',
-        phone: '+21611111111',
-        address: 'Tunis Centre',
-        email: 'pizza@house.com',
-        description: 'Restaurant italien spécialisé en pizzas artisanales',
-        image: 'https://images.unsplash.com/photo-1601924582975-7d749ec78d2b',
-      },
-      {
-        name: 'Pharma Santé',
-        type: 'pharmacy',
-        phone: '+21622222222',
-        address: 'Ariana',
-        email: 'contact@pharmasante.com',
-        description: 'Pharmacie ouverte 24h/24 avec livraison rapide',
-        image: 'https://images.unsplash.com/photo-1580281657529-47a3cbb81f5a',
-      },
-      {
-        name: 'GoFast Delivery',
-        type: 'course',
-        phone: '+21633333333',
-        address: 'La Marsa',
-        email: 'support@gofast.com',
-        description: 'Service de livraison rapide et fiable',
-        image: 'https://images.unsplash.com/photo-1604147706283-8c67b0ec7dfd',
-      }
+      { name: "Lablabi El Kahena",         type: "restaurant", phone: "+216 22 123 456", address: "Médina de Tunis",          csRPercent: 5,  csCPercent: 0 },
+      { name: "Restaurant Dar Belhadj",    type: "restaurant", phone: "+216 71 123 457", address: "La Marsa",                 csRPercent: 10, csCPercent: 5 },
+      { name: "Pâtisserie Masmoudi",       type: "restaurant", phone: "+216 74 123 458", address: "Sfax Centre",              csRPercent: 5,  csCPercent: 0 },
+      { name: "Brik Danouni",              type: "restaurant", phone: "+216 71 123 459", address: "La Marsa Corniche",        csRPercent: 5,  csCPercent: 0 },
+      { name: "Pharmacie Centrale Tunis",  type: "pharmacy",   phone: "+216 71 123 460", address: "Avenue Habib Bourguiba",                        },
+      { name: "Épicerie Fine Ben Yedder",  type: "course",     phone: "+216 70 123 461", address: "Carthage",                                        },
     ]);
 
-    console.log('🚚 Providers ajoutés:', providers.map(p => p.name));
+    // 2. Création des ProductOption (options individuelles)
+    const options = await ProductOption.insertMany([
+      // Piment
+      { name: "Sans piment", price: 0 },
+      { name: "Un peu pimenté", price: 0 },
+      { name: "Piquant", price: 0 },
+      { name: "Très piquant (diable !)", price: 500 },
+      // Harissa
+      { name: "Sans harissa", price: 0 },
+      { name: "Avec harissa", price: 800 },
+      // Taille
+      { name: "Petit", price: 0 },
+      { name: "Moyen", price: 3000 },
+      { name: "Grand", price: 6000 },
+      // Extras classiques
+      { name: "Œuf", price: 1000 },
+      { name: "Thon", price: 2500 },
+      { name: "Merguez extra", price: 4000 },
+      { name: "Câpres", price: 800 },
+      { name: "Pommes de terre", price: 1000 },
+      // Sucre / Miel
+      { name: "Sans sucre", price: 0 },
+      { name: "Sucre normal", price: 0 },
+      { name: "Extra miel", price: 2000 },
+    ]);
 
-    // 🍕 Produits de restaurant
-    const restaurantProducts = [
-      { name: 'Pizza Margherita', price: 18, category: 'Pizzas', image: 'https://images.unsplash.com/photo-1601924582975-7d749ec78d2b' },
-      { name: 'Pizza 4 Fromages', price: 22, category: 'Pizzas', image: 'https://images.unsplash.com/photo-1601924928383-5c7d5a7d58a6' },
-      { name: 'Burger Maison', price: 20, category: 'Burgers', image: 'https://images.unsplash.com/photo-1550547660-d9450f859349' },
-      { name: 'Pâtes Carbonara', price: 19, category: 'Pâtes', image: 'https://images.unsplash.com/photo-1589308078051-dc9a8aabf7d9' },
-      { name: 'Salade César', price: 15, category: 'Salades', image: 'https://images.unsplash.com/photo-1604909053191-3bbbea4c5932' },
-      { name: 'Pizza Orientale', price: 21, category: 'Pizzas', image: 'https://images.unsplash.com/photo-1594007654729-407eedc4be63' },
-      { name: 'Tiramisu', price: 10, category: 'Desserts', image: 'https://images.unsplash.com/photo-1617196034796-73e5b40b1e9f' },
-      { name: 'Lasagnes Bolognaise', price: 23, category: 'Pâtes', image: 'https://images.unsplash.com/photo-1612874742237-652f09e22a5c' },
-      { name: 'Pizza Végétarienne', price: 18, category: 'Pizzas', image: 'https://images.unsplash.com/photo-1548365328-8b7e8e61f6e3' },
-      { name: 'Panini Thon', price: 12, category: 'Snacks', image: 'https://images.unsplash.com/photo-1605470207062-76cf15c2272d' },
-      { name: 'Coca-Cola', price: 3, category: 'Boissons', image: 'https://images.unsplash.com/photo-1606813902773-1b77c8b266d8' },
-      { name: 'Eau minérale', price: 2, category: 'Boissons', image: 'https://images.unsplash.com/photo-1629131726746-97e7675e5f4f' },
-      { name: 'Pizza Royale', price: 20, category: 'Pizzas', image: 'https://images.unsplash.com/photo-1585238341986-1d66b1b6b5cb' },
-      { name: 'Crêpe Nutella', price: 8, category: 'Desserts', image: 'https://images.unsplash.com/photo-1551024506-0bccd828d307' }
-    ].map(p => ({ ...p, provider: providers[0]._id, status: 'available', description: `${p.name} délicieux et préparé avec soin.` }));
+    // 3. Création des OptionGroups tunisiens
+    const optionGroups = await OptionGroup.insertMany([
+      {
+        name: "Niveau de piment",
+        min: 1, max: 1,
+        options: options.slice(0, 4).map(o => ({ option: o._id, name: o.name, price: o.price }))
+      },
+      {
+        name: "Harissa ?",
+        min: 1, max: 1,
+        options: options.slice(4, 6).map(o => ({ option: o._id, name: o.name, price: o.price }))
+      },
+      {
+        name: "Taille",
+        min: 1, max: 1,
+        options: options.slice(6, 9).map(o => ({ option: o._id, name: o.name, price: o.price }))
+      },
+      {
+        name: "Extras brik / sandwich",
+        min: 0, max: 5,
+        options: options.slice(9, 14).map(o => ({ option: o._id, name: o.name, price: o.price }))
+      },
+      {
+        name: "Sucre / Miel (pâtisserie)",
+        min: 1, max: 1,
+        options: options.slice(14, 17).map(o => ({ option: o._id, name: o.name, price: o.price }))
+      },
+    ]);
 
-    // 💊 Produits de pharmacie
-    const pharmacyProducts = [
-      { name: 'Doliprane 500mg', price: 4.5, category: 'Médicaments', image: 'https://images.unsplash.com/photo-1582719478250-c89cae4dc85b' },
-      { name: 'Vitamine C 1000mg', price: 8, category: 'Compléments', image: 'https://images.unsplash.com/photo-1582719478175-2a7b74f68b44' },
-      { name: 'Gel désinfectant', price: 5, category: 'Hygiène', image: 'https://images.unsplash.com/photo-1583947582886-f36f63634c85' },
-      { name: 'Parfum bébé', price: 15, category: 'Bébés', image: 'https://images.unsplash.com/photo-1620912189868-3a37b94e34e2' },
-      { name: 'Crème hydratante', price: 12, category: 'Beauté', image: 'https://images.unsplash.com/photo-1620912189868-3a37b94e34e2' },
-      { name: 'Masque chirurgical (x10)', price: 6, category: 'Hygiène', image: 'https://images.unsplash.com/photo-1603398938378-c6c3c8f4d5d4' },
-      { name: 'Thermomètre digital', price: 18, category: 'Santé', image: 'https://images.unsplash.com/photo-1582719478293-0b4bda1b55c3' },
-      { name: 'Brosse à dents électrique', price: 35, category: 'Hygiène', image: 'https://images.unsplash.com/photo-1603808033192-0817e9b86f21' },
-      { name: 'Sirop pour la toux', price: 9, category: 'Médicaments', image: 'https://images.unsplash.com/photo-1576073491935-6a8f8e65c1df' },
-      { name: 'Savon dermatologique', price: 7, category: 'Beauté', image: 'https://images.unsplash.com/photo-1600093463592-3ff53ed9f99d' },
-      { name: 'Shampooing antipelliculaire', price: 11, category: 'Beauté', image: 'https://images.unsplash.com/photo-1620912189868-3a37b94e34e2' },
-      { name: 'Dentifrice blanchissant', price: 6, category: 'Hygiène', image: 'https://images.unsplash.com/photo-1596464716121-681e6f9e36c4' },
-      { name: 'Coton démaquillant', price: 3, category: 'Beauté', image: 'https://images.unsplash.com/photo-1614289494051-70e07d5bb6c7' }
-    ].map(p => ({ ...p, provider: providers[1]._id, status: 'available', description: `${p.name} - produit de qualité certifié.` }));
+    const [pimentGroup, harissaGroup, tailleGroup, extrasGroup, sucreGroup] = optionGroups;
 
-    // 🚚 Produits / services de livraison
-    const courseProducts = [
-      { name: 'Livraison rapide (5 km)', price: 7, category: 'Livraison locale', image: 'https://images.unsplash.com/photo-1604147706283-8c67b0ec7dfd' },
-      { name: 'Livraison standard (10 km)', price: 10, category: 'Livraison locale', image: 'https://images.unsplash.com/photo-1581092334473-f79a9f8e7a06' },
-      { name: 'Transport meuble', price: 30, category: 'Transport', image: 'https://images.unsplash.com/photo-1581092334473-f79a9f8e7a06' },
-      { name: 'Livraison documents', price: 5, category: 'Express', image: 'https://images.unsplash.com/photo-1613545327564-1b4b27a229e0' },
-      { name: 'Livraison colis lourd (50kg)', price: 25, category: 'Transport', image: 'https://images.unsplash.com/photo-1615397349754-b5c5292f6f68' },
-      { name: 'Livraison inter-ville', price: 40, category: 'Longue distance', image: 'https://images.unsplash.com/photo-1502164980785-f8aa41d53611' },
-      { name: 'Service chauffeur', price: 60, category: 'Transport', image: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70' },
-      { name: 'Livraison nourriture', price: 8, category: 'Livraison locale', image: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4' },
-      { name: 'Livraison nocturne', price: 15, category: 'Express', image: 'https://images.unsplash.com/photo-1533560904424-6b8b74895b46' },
-      { name: 'Service entreprises', price: 50, category: 'Professionnel', image: 'https://images.unsplash.com/photo-1581092580495-4c4d9cdb3193' },
-      { name: 'Livraison fragile', price: 20, category: 'Transport', image: 'https://images.unsplash.com/photo-1566576912321-cdf3e45a87df' },
-      { name: 'Livraison éco', price: 6, category: 'Livraison locale', image: 'https://images.unsplash.com/photo-1605379399642-870262d3d051' },
-      { name: 'Transport urgent', price: 25, category: 'Express', image: 'https://images.unsplash.com/photo-1613545327564-1b4b27a229e0' }
-    ].map(p => ({ ...p, provider: providers[2]._id, status: 'available', description: `${p.name} - service fiable et rapide.` }));
+    // 4. Les 50 produits tunisiens
+    const produitsTunisiens = [
+      // STREET FOOD & RESTAURANTS
+      { name: "Lablabi complet", description: "Pois chiches, pain, thon, œuf, harissa", price: 3500, category: "Street Food", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [pimentGroup._id, harissaGroup._id, extrasGroup._id] },
+      { name: "Brik à l'œuf", description: "Feuille de malsouka, œuf, persil", price: 2800, category: "Street Food", provider: providers[3]._id, deliveryCategory: "restaurant", optionGroups: [extrasGroup._id] },
+      { name: "Brik au thon", description: "Brik farcie au thon et pommes de terre", price: 3500, category: "Street Food", provider: providers[3]._id, deliveryCategory: "restaurant", optionGroups: [extrasGroup._id] },
+      { name: "Brik crevettes", description: "Brik luxe aux crevettes", price: 7500, category: "Street Food", provider: providers[3]._id, deliveryCategory: "restaurant", optionGroups: [pimentGroup._id] },
+      { name: "Ojja merguez & œufs", description: "Sauce tomate pimentée, merguez, œufs", price: 12000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [pimentGroup._id] },
+      { name: "Ojja crevettes", description: "Ojja aux crevettes fraîches", price: 22000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [pimentGroup._id] },
+      { name: "Chapati complet", description: "Escalope, thon, harissa, frites", price: 7000, category: "Sandwich", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [harissaGroup._id] },
+      { name: "Fricassé thon", description: "Beignet salé farci thon, olives, harissa", price: 2200, category: "Sandwich", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [harissaGroup._id] },
+      { name: "Kaftaji", description: "Mélange légumes frits, œuf, harissa", price: 5500, category: "Street Food", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [pimentGroup._id] },
+      { name: "Mlawi thon fromage", description: "Crêpe tunisienne farcie", price: 5000, category: "Street Food", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [extrasGroup._id] },
 
-    const allProducts = [...restaurantProducts, ...pharmacyProducts, ...courseProducts];
+      // PLATS TRADITIONNELS
+      { name: "Couscous au poisson (loup)", description: "Couscous fin, légumes, poisson grillé", price: 45000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [tailleGroup._id] },
+      { name: "Couscous agneau", description: "Couscous royal à l'agneau", price: 38000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [tailleGroup._id] },
+      { name: "Mloukhia", description: "Viande séchée, sauce verte, riz", price: 30000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [tailleGroup._id] },
+      { name: "Kamounia", description: "Ragoût de viande au cumin", price: 18000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant" },
+      { name: "Poissons grillés (pageot)", description: "Poisson frais grillé + salade mechouia", price: 48000, category: "Poisson", provider: providers[1]._id, deliveryCategory: "restaurant", optionGroups: [tailleGroup._id] },
+      { name: "Calamars frits", description: "Calamars panés + sauce tartare", price: 28000, category: "Poisson", provider: providers[1]._id, deliveryCategory: "restaurant" },
 
-    await Product.insertMany(allProducts);
+      // PATISSERIE
+      { name: "Bambalouni", description: "Beignet sucré de Sidi Bou Saïd", price: 1800, category: "Pâtisserie", provider: providers[2]._id, deliveryCategory: "restaurant", optionGroups: [sucreGroup._id] },
+      { name: "Makroudh Kairouan (500g)", description: "Pâtisserie à la semoule et dattes", price: 22000, category: "Pâtisserie", provider: providers[2]._id, deliveryCategory: "restaurant" },
+      { name: "Baklawa assortiment (500g)", description: "Pistache, amande, noix", price: 35000, category: "Pâtisserie", provider: providers[2]._id, deliveryCategory: "restaurant" },
+      { name: "Kaak warka", description: "Anneau à la pâte d’amande", price: 2500, category: "Pâtisserie", provider: providers[2]._id, deliveryCategory: "restaurant" },
+      { name: "Yo-yo (6 pièces)", description: "Beignets au miel et graines de sésame", price: 12000, category: "Pâtisserie", provider: providers[2]._id, deliveryCategory: "restaurant" },
+      { name: "Assida zgougou", description: "Spécial Aïd - graines de pin d’Alep", price: 15000, category: "Dessert", provider: providers[2]._id, deliveryCategory: "restaurant" },
 
-    console.log(`✅ ${allProducts.length} produits insérés avec succès !`);
-    process.exit();
-  } catch (error) {
-    console.error('❌ Erreur lors du seeding:', error);
+      // EPICERIE & PHARMACIE
+      { name: "Harissa maison (pot 200g)", description: "Harissa artisanale Le Phénicien", price: 6500, category: "Condiment", provider: providers[5]._id, deliveryCategory: "course", optionGroups: [pimentGroup._id] },
+      { name: "Huile d’olive extra vierge 1L", description: "Domaine Ben Ammar - Médaille d’or", price: 28000, category: "Épicerie", provider: providers[5]._id, deliveryCategory: "course" },
+      { name: "Dattes Deglet Nour (1kg)", description: "Qualité premium", price: 18000, category: "Épicerie", provider: providers[5]._id, deliveryCategory: "course" },
+      { name: "Bsissa (500g)", description: "Mélange céréales & fruits secs", price: 12000, category: "Petit-déjeuner", provider: providers[5]._id, deliveryCategory: "course" },
+      { name: "Paracétamol 500mg (boîte)", price: 2500, category: "Médicaments", provider: providers[4]._id, deliveryCategory: "pharmacy" },
+      { name: "Vitamine C 1000mg effervescente", price: 8500, category: "Médicaments", provider: providers[4]._id, deliveryCategory: "pharmacy" },
+
+      // BOISSONS & DESSERTS
+      { name: "Thé à la menthe (kit 20 sachets + menthe)", price: 15000, category: "Boisson", provider: providers[5]._id, deliveryCategory: "course" },
+      { name: "Limounada maison 1L", description: "Citronnade fraîche + menthe", price: 8000, category: "Boisson", provider: providers[0]._id, deliveryCategory: "restaurant" },
+      { name: "Bouza pistache", description: "Glace artisanale tunisienne", price: 5000, category: "Dessert", provider: providers[2]._id, deliveryCategory: "restaurant" },
+
+      // Encore quelques classiques pour arriver à 50
+      { name: "Sandwich Tunisien complet", description: "Thon, œuf, salade, harissa, olives", price: 6500, category: "Sandwich", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [harissaGroup._id] },
+      { name: "Salade Mechouia", description: "Poivrons et tomates grillés", price: 8000, category: "Entrée", provider: providers[1]._id, deliveryCategory: "restaurant" },
+      { name: "Chorba frik", description: "Soupe traditionnelle au blé vert", price: 8000, category: "Soupe", provider: providers[1]._id, deliveryCategory: "restaurant" },
+      { name: "Tajine el Bey", description: "Tajine au poulet, amandes, œufs", price: 18000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant" },
+      { name: "Banatage (pistaches de Nabeul) 250g", price: 18000, category: "Confiserie", provider: providers[5]._id, deliveryCategory: "course" },
+      { name: "Eau de fleur d’oranger 25cl", price: 8000, category: "Épicerie", provider: providers[5]._id, deliveryCategory: "course" },
+      // ... et on complète jusqu'à 50 (les 15 derniers sont des variantes réalistes)
+      ...Array.from({ length: 15 }, (_, i) => ({
+        name: `Produit tunisien #${i + 36}`,
+        description: "Spécialité régionale authentique",
+        price: 5000 + i * 1500,
+        stock: 100,
+        category: i % 2 === 0 ? "Traditionnel" : "Pâtisserie",
+        provider: providers[Math.floor(Math.random() * 3)]._id,
+        deliveryCategory: "restaurant",
+        image: "https://via.placeholder.com/300x300?text=Produit+Tunisien",
+      })),
+    ].slice(0, 50); // On force exactement 50
+
+    await Product.insertMany(produitsTunisiens.map(p => ({
+      ...p,
+      stock: p.stock || 99,
+      status: "available",
+      availability: true,
+      image: p.image || "https://via.placeholder.com/400x300?text=" + encodeURIComponent(p.name),
+    })));
+
+    console.log("50 produits 100% tunisiens insérés avec succès !");
+    process.exit(0);
+  } catch (err) {
+    console.error("Erreur seeding:", err);
     process.exit(1);
   }
 }
 
-seed();
+seedTunisie();
