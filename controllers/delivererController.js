@@ -501,3 +501,28 @@ exports.updateDelivererLocation = async (req, res) => {
     });
   }
 };
+
+// @desc    Logout deliverer (invalidate token)
+// @route   POST /api/deliverers/logout
+// @access  Private (deliverer)
+exports.logoutDeliverer = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    
+    // For now, we'll just return success since JWT tokens are stateless
+    // In a production environment, you might want to implement a token blacklist
+    // or use a database to track revoked tokens
+    
+    res.json({
+      success: true,
+      message: 'Déconnexion réussie'
+    });
+  } catch (error) {
+    console.error('Error in logoutDeliverer:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur serveur',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};

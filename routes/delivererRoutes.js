@@ -8,7 +8,8 @@ const {
   updateOrderStatus,
   getDelivererEarnings,
   getDelivererProfile,
-  updateDelivererLocation
+  updateDelivererLocation,
+  logoutDeliverer
 } = require('../controllers/delivererController');
 const { isDeliverer } = require('../middleware/auth');
 
@@ -21,5 +22,6 @@ router.put('/orders/:orderId/status', isDeliverer, updateOrderStatus);
 router.get('/earnings', isDeliverer, getDelivererEarnings);
 router.get('/profile', isDeliverer, getDelivererProfile);
 router.put('/profile/location', isDeliverer, updateDelivererLocation);
+router.post('/logout', isDeliverer, logoutDeliverer);
 
 module.exports = router;
