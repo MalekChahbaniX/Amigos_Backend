@@ -261,11 +261,19 @@ exports.createProduct = async (req, res) => {
       }
     }
 
+    const priceNum = parseFloat(price);
+    const csRNum = csR || 5;
+    const csCNum = csC || 0;
+    
+    // Calculate P1 and P2
+    const p1 = priceNum * (1 - csRNum / 100);
+    const p2 = priceNum * (1 + csCNum / 100);
+
     // Create product with optionGroups and new pricing fields
     const product = await Product.create({
       name,
       description,
-      price: parseFloat(price),
+      price: priceNum,
       category,
       stock: parseInt(stock) || 0,
       status: status || 'available',
@@ -273,8 +281,10 @@ exports.createProduct = async (req, res) => {
       promo: promo ? promo._id : null,
       optionGroups: optionGroups || [],  // Array of ObjectIds
       availability: availability !== false,
-      csR: csR || 5,  // Default to 5% restaurant commission
-      csC: csC || 0,  // Default to 0% client commission
+      csR: csRNum,
+      csC: csCNum,
+      p1: p1,
+      p2: p2,
       deliveryCategory: deliveryCategory || 'restaurant', // Default to restaurant
       ...(image && { image }),
     });
@@ -389,6 +399,17 @@ exports.updateProduct = async (req, res) => {
       updateData.promo = promoId;
     } else if (promoId === null) {
       updateData.promo = null;
+    }
+
+    // Calculate P1 and P2 if csR or csC changed
+    if (updateData.csR !== undefined || updateData.csC !== undefined || updateData.price !== undefined) {
+      const currentProduct = await Product.findById(req.params.id);
+      const price = updateData.price !== undefined ? updateData.price : currentProduct.price;
+      const csR = updateData.csR !== undefined ? updateData.csR : currentProduct.csR;
+      const csC = updateData.csC !== undefined ? updateData.csC : currentProduct.csC;
+      
+      updateData.p1 = price * (1 - csR / 100);
+      updateData.p2 = price * (1 + csC / 100);
     }
 
     const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true })

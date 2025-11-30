@@ -344,7 +344,7 @@ exports.getRecentOrders = async (req, res) => {
     const recentOrders = await Order.find()
       .sort({ createdAt: -1 })
       .limit(10)
-      .populate('clientId', 'firstName lastName')
+      .populate('client', 'firstName lastName')
       .select('orderNumber totalAmount status createdAt');
 
     const formattedOrders = recentOrders.map(order => ({
@@ -365,6 +365,203 @@ exports.getRecentOrders = async (req, res) => {
     console.error('Error fetching recent orders:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des commandes récentes',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Get all orders with pagination and filtering
+// @route   GET /api/dashboard/orders
+// @access  Private (Super Admin only)
+exports.getAllOrders = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search, status } = req.query;
+    const skip = (page - 1) * limit;
+    
+    let matchStage = {};
+    
+    if (search) {
+      matchStage.$or = [
+        { orderNumber: { $regex: search, $options: 'i' } },
+        { 'client.firstName': { $regex: search, $options: 'i' } },
+        { 'client.lastName': { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    if (status && status !== 'all') {
+      matchStage.status = status;
+    }
+
+    const orders = await Order.find(matchStage)
+      .populate('client', 'firstName lastName phoneNumber')
+      .populate('provider', 'name type phone address')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Order.countDocuments(matchStage);
+    const totalPages = Math.ceil(total / limit);
+
+    const formattedOrders = orders.map(order => ({
+      id: order._id,
+      orderNumber: order.orderNumber || `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: order.client ? `${order.client.firstName} ${order.client.lastName}` : 'Client inconnu',
+      phone: order.client?.phoneNumber,
+      address: order.deliveryAddress
+        ? `${order.deliveryAddress.street || ''}, ${order.deliveryAddress.city || ''}`.replace(/, $/, '')
+        : 'Adresse inconnue',
+      total: `${order.totalAmount} DT`,
+      solde: order.platformSolde ? `${order.platformSolde.toFixed(3)} DT` : '0.000 DT',
+      status: order.status,
+      date: new Date(order.createdAt).toLocaleDateString('fr-FR'),
+      deliverer: order.deliveryDriver ? 'Assigné' : 'Non assigné',
+      provider: order.provider ? order.provider.name : 'Restaurant',
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      }))
+    }));
+
+    res.status(200).json({
+      orders: formattedOrders,
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages
+    });
+
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des commandes',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Update order status
+// @route   PUT /api/dashboard/orders/:id/status
+// @access  Private (Super Admin only)
+exports.updateOrderStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    
+    const validStatuses = ['pending', 'confirmed', 'preparing', 'in_delivery', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        message: 'Statut invalide',
+        validStatuses
+      });
+    }
+
+    const order = await Order.findById(id)
+      .populate('client', 'firstName lastName phoneNumber')
+      .populate('provider', 'name type phone address');
+
+    if (!order) {
+      return res.status(404).json({
+        message: 'Commande non trouvée'
+      });
+    }
+
+    order.status = status;
+    await order.save();
+
+    const formattedOrder = {
+      id: order._id,
+      orderNumber: order.orderNumber || `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: order.client ? `${order.client.firstName} ${order.client.lastName}` : 'Client inconnu',
+      phone: order.client?.phoneNumber,
+      address: order.deliveryAddress
+        ? `${order.deliveryAddress.street || ''}, ${order.deliveryAddress.city || ''}`.replace(/, $/, '')
+        : 'Adresse inconnue',
+      total: `${order.totalAmount} DT`,
+      solde: order.platformSolde ? `${order.platformSolde.toFixed(3)} DT` : '0.000 DT',
+      status: order.status,
+      date: new Date(order.createdAt).toLocaleDateString('fr-FR'),
+      deliverer: order.deliveryDriver ? 'Assigné' : 'Non assigné',
+      provider: order.provider ? order.provider.name : 'Restaurant',
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      }))
+    };
+
+    res.status(200).json({
+      message: 'Statut mis à jour avec succès',
+      order: formattedOrder
+    });
+
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la mise à jour du statut',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// @desc    Assign deliverer to order
+// @route   PUT /api/dashboard/orders/:id/assign-deliverer
+// @access  Private (Super Admin only)
+exports.assignDeliverer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { delivererId } = req.body;
+    
+    const order = await Order.findById(id)
+      .populate('client', 'firstName lastName phoneNumber')
+      .populate('provider', 'name type phone address');
+
+    if (!order) {
+      return res.status(404).json({
+        message: 'Commande non trouvée'
+      });
+    }
+
+    if (order.status !== 'pending') {
+      return res.status(400).json({
+        message: 'La commande ne peut pas être assignée dans son état actuel'
+      });
+    }
+
+    order.deliveryDriver = delivererId;
+    order.status = 'in_delivery';
+    await order.save();
+
+    const formattedOrder = {
+      id: order._id,
+      orderNumber: order.orderNumber || `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+      client: order.client ? `${order.client.firstName} ${order.client.lastName}` : 'Client inconnu',
+      phone: order.client?.phoneNumber,
+      address: order.deliveryAddress
+        ? `${order.deliveryAddress.street || ''}, ${order.deliveryAddress.city || ''}`.replace(/, $/, '')
+        : 'Adresse inconnue',
+      total: `${order.totalAmount} DT`,
+      solde: order.platformSolde ? `${order.platformSolde.toFixed(3)} DT` : '0.000 DT',
+      status: order.status,
+      date: new Date(order.createdAt).toLocaleDateString('fr-FR'),
+      deliverer: order.deliveryDriver ? 'Assigné' : 'Non assigné',
+      provider: order.provider ? order.provider.name : 'Restaurant',
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      }))
+    };
+
+    res.status(200).json({
+      message: 'Livreur assigné avec succès',
+      order: formattedOrder
+    });
+
+  } catch (error) {
+    console.error('Error assigning deliverer:', error);
+    res.status(500).json({
+      message: 'Erreur lors de l\'assignation du livreur',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
