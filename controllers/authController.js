@@ -108,18 +108,57 @@ exports.loginUser = async (req, res) => {
         });
         console.log('Nouveau OTP sauvegardé');
 
-        // Essayer d'envoyer l'OTP via SMS
-        let smsSent = false;
+        // Essayer d'envoyer l'OTP via SMS et/ou WhatsApp
+        let channelsSent = [];
         let errorMessage = '';
+        let success = false;
+        let actualDelivery = false;
+        let deliveryStatus = 'pending';
 
         try {
           const result = await OTPService.sendOTP(phoneNumber, otp);
-          console.log('OTP envoyé par SMS avec succès:', result.sid);
-          smsSent = result.success || true;
+          console.log('OTP envoyé avec succès via:', result.channels);
+          console.log('Réponses:', result.responses);
+          channelsSent = result.channels || [];
+          success = result.success || false;
+          
+          // Vérifier si l'OTP a été réellement envoyé
+          if (result.responses && result.responses.length > 0) {
+            const sentResponses = result.responses.filter(r => r.status && r.status !== 'failed');
+            actualDelivery = sentResponses.length > 0;
+          }
+          
+          // Vérifier si c'est une erreur d'authentification
+          if (result.responses && result.responses.some(r => r.errorMessage === 'Authentication failed')) {
+            deliveryStatus = 'auth_error';
+            errorMessage = 'Erreur d\'authentification Twilio';
+          } else if (!actualDelivery && !success) {
+            deliveryStatus = 'failed';
+            errorMessage = 'Échec de l\'envoi de l\'OTP';
+          } else {
+            deliveryStatus = 'sent';
+          }
         } catch (smsError) {
-          console.error('Erreur envoi SMS:', smsError.message);
+          console.error('Erreur envoi OTP:', smsError.message);
           errorMessage = smsError.message;
-          // On continue même si l'envoi SMS échoue
+          deliveryStatus = 'failed';
+          // On continue même si l'envoi échoue
+        }
+
+        // Déterminer le message en fonction des canaux utilisés et du statut de livraison
+        let message = 'Code de vérification généré';
+        if (deliveryStatus === 'auth_error') {
+          message = 'Code généré (erreur d\'authentification Twilio)';
+        } else if (deliveryStatus === 'sent') {
+          if (channelsSent.includes('whatsapp') && channelsSent.includes('sms')) {
+            message = 'Code de vérification envoyé par WhatsApp et SMS';
+          } else if (channelsSent.includes('whatsapp')) {
+            message = 'Code de vérification envoyé par WhatsApp';
+          } else if (channelsSent.includes('sms')) {
+            message = 'Code de vérification envoyé par SMS';
+          }
+        } else {
+          message = 'Code généré mais non envoyé';
         }
 
         // Réponse adaptée selon le succès de l'envoi
@@ -127,11 +166,19 @@ exports.loginUser = async (req, res) => {
           _id: user._id,
           phoneNumber: user.phoneNumber,
           isVerified: false,
-          otpSent: smsSent,
+          channelsSent,
+          otpSent: success || channelsSent.length > 0,
+          deliveryStatus,
         };
 
-        if (smsSent) {
-          response.message = 'Code de vérification envoyé par SMS';
+        if (success || channelsSent.length > 0) {
+          response.message = message;
+          
+          // Si c'est une erreur d'authentification, inclure le code pour permettre la vérification
+          if (deliveryStatus === 'auth_error') {
+            response.debugOtp = otp;
+            response.message += ` - Code: ${otp}`;
+          }
           
           // En développement, inclure le code pour tester facilement
           if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
@@ -139,10 +186,10 @@ exports.loginUser = async (req, res) => {
             response.devMessage = `Code pour tester: ${otp}`;
           }
         } else {
-          response.message = 'Code de vérification généré (erreur envoi SMS)';
-          response.error = `Erreur SMS: ${errorMessage}`;
+          response.message = message;
+          response.error = errorMessage;
           
-          // En cas d'échec SMS, retourner le code en mode développement
+          // En cas d'échec total, retourner le code en mode développement
           if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
             response.debugOtp = otp;
             response.message += ` - Code de debug: ${otp}`;

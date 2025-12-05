@@ -10,18 +10,22 @@ const zoneSchema = new mongoose.Schema({
   minDistance: {
     type: Number,
     required: [true, 'La distance minimale est obligatoire'],
-    min: [0, 'La distance minimale ne peut pas être négative']
+    min: [0, 'La distance minimale ne peut pas être négative'],
+    validate: {
+      validator: function(value) {
+        return Number.isFinite(value) && value >= 0;
+      },
+      message: 'La distance minimale doit être un nombre valide'
+    }
   },
   maxDistance: {
     type: Number,
     required: [true, 'La distance maximale est obligatoire'],
     validate: {
       validator: function(value) {
-        // When updating, this.minDistance might not be available in the context
-        // So we need to ensure the validation works in both create and update scenarios
-        return value > this.minDistance;
+        return Number.isFinite(value);
       },
-      message: 'La distance maximale doit être supérieure à la distance minimale'
+      message: 'La distance maximale doit être un nombre valide'
     }
   },
   price: {

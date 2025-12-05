@@ -79,16 +79,32 @@ const createZone = async (req, res) => {
   try {
     const { number, minDistance, maxDistance, price } = req.body;
 
-    // Check if zone number already exists
-    const existingZone = await Zone.findOne({ number });
-    if (existingZone) {
-      return res.status(400).json({ message: "Un zone avec ce numéro existe déjà" });
+    // Ensure 3 decimal precision for distances
+    const minDist = Number(minDistance);
+    const maxDist = Number(maxDistance);
+    
+    if (maxDist <= minDist) {
+      return res.status(400).json({ message: "La distance maximale doit être supérieure à la distance minimale" });
+    }
+
+    // Check for overlapping zones
+    const allZones = await Zone.find({}).sort({ minDistance: 1 });
+    
+    for (const existingZone of allZones) {
+      // Check if new zone overlaps with existing zone
+      if ((minDist < existingZone.maxDistance && maxDist > existingZone.minDistance) ||
+          (minDist === existingZone.maxDistance) ||
+          (maxDist === existingZone.minDistance)) {
+        return res.status(400).json({
+          message: `La zone chevauche une zone existante (${existingZone.number}: ${existingZone.minDistance}km - ${existingZone.maxDistance}km)`
+        });
+      }
     }
 
     const zone = new Zone({
       number,
-      minDistance,
-      maxDistance,
+      minDistance: Number(minDist.toFixed(3)),
+      maxDistance: Number(maxDist.toFixed(3)),
       price
     });
 
@@ -126,10 +142,35 @@ const updateZone = async (req, res) => {
       }
     }
 
-    // Manual validation for maxDistance > minDistance
+    // Manual validation for maxDistance > minDistance with 3 decimal precision
     if (minDistance !== undefined && maxDistance !== undefined) {
-      if (maxDistance <= minDistance) {
+      const minDist = Number(minDistance);
+      const maxDist = Number(maxDistance);
+      
+      if (maxDist <= minDist) {
         return res.status(400).json({ message: "La distance maximale doit être supérieure à la distance minimale" });
+      }
+      
+      // Check for overlapping zones (excluding current zone being updated)
+      const allOtherZones = await Zone.find({ _id: { $ne: id } }).sort({ minDistance: 1 });
+      
+      for (const existingZone of allOtherZones) {
+        // Check if updated zone overlaps with existing zone
+        if ((minDist < existingZone.maxDistance && maxDist > existingZone.minDistance) ||
+            (minDist === existingZone.maxDistance) ||
+            (maxDist === existingZone.minDistance)) {
+          return res.status(400).json({
+            message: `La zone chevauche une zone existante (${existingZone.number}: ${existingZone.minDistance}km - ${existingZone.maxDistance}km)`
+          });
+        }
+      }
+      
+      // Ensure 3 decimal precision for consistency
+      if (minDistance !== undefined) {
+        req.body.minDistance = Number(minDist.toFixed(3));
+      }
+      if (maxDistance !== undefined) {
+        req.body.maxDistance = Number(maxDist.toFixed(3));
       }
     }
 
@@ -202,6 +243,9 @@ const getUserZone = async (req, res) => {
 
     const activeZones = await Zone.find({ number: { $in: city.activeZones } });
 
+    // Sort zones by minDistance to ensure proper order
+    activeZones.sort((a, b) => a.minDistance - b.minDistance);
+
     const matchedZone = activeZones.find(
       (z) => distance >= z.minDistance && distance < z.maxDistance
     );
@@ -211,7 +255,7 @@ const getUserZone = async (req, res) => {
 
     res.json({
       zone: matchedZone.number,
-      distance: distance.toFixed(2),
+      distance: distance.toFixed(3), // Use 3 decimal places for distance
       price: matchedZone.price,
     });
   } catch (err) {
