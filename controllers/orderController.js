@@ -17,42 +17,85 @@ exports.createOrder = async (req, res) => {
     itemsCount: req.body.items?.length || 0,
   });
 
-  const { 
-    client, 
-    provider, 
-    items, 
-    deliveryAddress, 
-    paymentMethod, 
-    totalAmount, 
-    deliveryFee, 
-    subtotal, 
+  const {
+    client,
+    provider,
+    items,
+    deliveryAddress, // Doit contenir { latitude, longitude }
+    paymentMethod,
+    totalAmount,
+    deliveryFee: clientProvidedDeliveryFee, // On le renomme pour éviter la confusion
+    subtotal,
     cardInfo,
-    zoneId,
-    distance
+    zoneId
   } = req.body;
 
   try {
-    // 1. Charger provider (pour connaître son type : restaurant, course, etc.)
+    // 1. Charger provider
     console.log('🔍 Fetching provider:', provider);
     const providerData = await Provider.findById(provider);
+
     if (!providerData) {
       console.log('❌ Provider not found:', provider);
       return res.status(404).json({ message: 'Provider not found' });
     }
-    console.log('✅ Provider loaded:', { 
-      id: providerData._id, 
-      name: providerData.name, 
-      type: providerData.type, 
-      csR: providerData.csRPercent, 
-      csC: providerData.csCPercent 
-    });
 
-    // 2. Charger les produits pour obtenir P1, P2, deliveryCategory
+    // --- LOGIQUE DE CALCUL DE DISTANCE ET ZONE ---
+    let calculatedDeliveryFee = 0;
+    let calculatedDistance = 0;
+    let matchedZoneId = zoneId; // Si déjà fourni
+
+    // Vérifier si on a les coordonnées pour calculer
+    if (
+        providerData.location && 
+        providerData.location.latitude && 
+        providerData.location.longitude &&
+        deliveryAddress && 
+        deliveryAddress.latitude && 
+        deliveryAddress.longitude
+    ) {
+        console.log('📏 Calculating precise distance server-side...');
+        
+        calculatedDistance = calculateDistance(
+            providerData.location.latitude,
+            providerData.location.longitude,
+            deliveryAddress.latitude,
+            deliveryAddress.longitude
+        );
+
+        console.log(`📏 Distance calculated: ${calculatedDistance.toFixed(3)} km`);
+
+        // Trouver la zone correspondante
+        const zone = await Zone.findOne({
+            minDistance: { $lte: calculatedDistance },
+            maxDistance: { $gt: calculatedDistance } // Strictement supérieur
+        });
+
+        if (zone) {
+            calculatedDeliveryFee = zone.price;
+            matchedZoneId = zone._id;
+            console.log(`📍 Matched Zone ${zone.number}: price = ${zone.price} TND`);
+        } else {
+            console.log('⚠️ No zone matched for this distance');
+            // Optionnel : Rejeter la commande si hors zone
+            // return res.status(400).json({ message: "Adresse hors zone de livraison" });
+            
+            // Ou fallback sur une valeur par défaut / valeur envoyée par le client
+            calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
+        }
+    } else {
+        console.log('⚠️ Missing GPS coordinates for calculation. Using provided deliveryFee or 0.');
+        // Fallback si pas de coordonnées (ex: anciennes adresses)
+        calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
+    }
+    // ---------------------------------------------
+
+    // 2. Charger les produits
     console.log('🛒 Loading products for pricing...');
     const productIds = items.map(item => item.product).filter(Boolean);
     const products = await Product.find({ _id: { $in: productIds } });
     const productMap = new Map(products.map(p => [p._id.toString(), p]));
-    
+
     // 3. Calculer les totaux P1, P2 et vérifier les catégories
     console.log('💰 Calculating pricing with commissions...');
     let p1Total = 0;
@@ -60,37 +103,33 @@ exports.createOrder = async (req, res) => {
     let hasRestaurant = false;
     let hasCourse = false;
     let hasPharmacy = false;
-
     const formattedItems = [];
-    
+
     for (const item of items) {
       const product = productMap.get(item.product?.toString() || item.productId?.toString());
       let P1, P2, deliveryCategory;
-      
+
       if (product) {
-        // Utiliser les valeurs calculées du produit
         P1 = product.p1;
         P2 = product.p2;
         deliveryCategory = product.deliveryCategory;
-        
-        // Catégorisation
+
         if (deliveryCategory === 'restaurant') hasRestaurant = true;
         if (deliveryCategory === 'course') hasCourse = true;
         if (deliveryCategory === 'pharmacy') hasPharmacy = true;
       } else {
-        // Calculer manuellement si le produit n'existe pas
         const P = item.price || 0;
         const csR = (providerData.csRPercent || 5) / 100;
         const csC = (providerData.csCPercent || 0) / 100;
         P1 = P * (1 - csR);
         P2 = P * (1 + csC);
-        deliveryCategory = providerData.type; // Utiliser le type du provider comme fallback
+        deliveryCategory = providerData.type;
       }
-      
+
       const qty = item.quantity || 1;
       p1Total += P1 * qty;
       p2Total += P2 * qty;
-      
+
       formattedItems.push({
         product: item.product || item.productId || null,
         name: item.name,
@@ -100,59 +139,28 @@ exports.createOrder = async (req, res) => {
         p2: P2,
         deliveryCategory: deliveryCategory,
       });
-      
-      console.log(`Item ${item.name || 'unknown'}: P=${item.price}, qty=${qty}, P1=${P1}, P2=${P2}, category=${deliveryCategory}`);
     }
 
-    console.log(`🧮 Totals: p1Total=${p1Total}, p2Total=${p2Total}`);
-
-    // 4. Déterminer la catégorie de livraison (priorité: course > pharmacy > restaurant)
+    // 4. Déterminer la catégorie de livraison
     let deliveryCategory = 'restaurant';
     if (hasCourse) deliveryCategory = 'course';
     else if (hasPharmacy) deliveryCategory = 'pharmacy';
-    
-    console.log('🏷️ Delivery category:', deliveryCategory);
 
-    // 5. Calculer les frais de livraison selon la zone
-    console.log('🚚 Calculating delivery fee...');
-    let calculatedDeliveryFee = 0;
-    
-    if (zoneId) {
-      const zone = await Zone.findById(zoneId);
-      if (zone) {
-        calculatedDeliveryFee = zone.price;
-        console.log(`📍 Zone ${zone.number}: delivery fee = ${calculatedDeliveryFee}`);
-      }
-    } else if (distance) {
-      // Trouver la zone correspondante à la distance
-      const zone = await Zone.findOne({
-        minDistance: { $lte: distance },
-        maxDistance: { $gte: distance }
-      });
-      if (zone) {
-        calculatedDeliveryFee = zone.price;
-        console.log(`📍 Distance ${distance}km -> Zone ${zone.number}: delivery fee = ${calculatedDeliveryFee}`);
-      }
-    }
-    
-    // Utiliser la deliveryFee fournie ou celle calculée
-    const finalDeliveryFee = deliveryFee !== undefined ? deliveryFee : calculatedDeliveryFee;
+    // 5. Utiliser les frais calculés
+    const finalDeliveryFee = calculatedDeliveryFee;
 
     // 6. Charger les frais application
     console.log('💳 Loading app fees...');
     const appSetting = await AppSetting.findOne();
     const appFee = appSetting ? appSetting.appFee : (deliveryCategory === 'restaurant' ? 0 : 1.5);
-    console.log('📱 App fee:', appFee);
 
     // 7. Calculer le montant final
     const finalAmount = p2Total + finalDeliveryFee + appFee;
-    console.log(`💰 Final amount: p2Total(${p2Total}) + deliveryFee(${finalDeliveryFee}) + appFee(${appFee}) = ${finalAmount}`);
+    console.log(`💰 Final amount details: Products(${p2Total}) + Delivery(${finalDeliveryFee}) + AppFee(${appFee}) = ${finalAmount}`);
 
-    // 8. Vérifier promo active applicable
+    // 8. Vérifier promo
     console.log('🎁 Checking for active promo...');
     const promo = await Promo.findOne({ status: 'active' });
-    console.log('Promo found:', promo ? { id: promo._id, name: promo.name, maxOrders: promo.maxOrders, ordersUsed: promo.ordersUsed } : 'None');
-
     let appliedPromo = null;
     let promoDiscount = 0;
 
@@ -162,32 +170,25 @@ exports.createOrder = async (req, res) => {
       promo.ordersUsed < promo.maxOrders &&
       finalAmount <= promo.maxAmount
     ) {
-      // Promo applicable
       appliedPromo = promo;
       promoDiscount = promo.discountAmount || 0;
       console.log(`✅ Promo "${promo.name}" applied! Discount: ${promoDiscount}`);
       
-      // Incrémenter le compteur promo
       promo.ordersUsed += 1;
       await promo.save();
     }
 
-    // 9. Appliquer la promo si applicable
     const totalAmountAfterPromo = Math.max(0, finalAmount - promoDiscount);
 
-    // 10. Valider le montant total
-    if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.01) {
+    // 10. Valider le montant total (Tolérance de 0.1 pour les arrondis)
+    if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.1) {
       console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${totalAmountAfterPromo}`);
-      return res.status(400).json({ 
-        message: 'Total amount does not match calculated amount',
-        expected: totalAmountAfterPromo,
-        submitted: totalAmount
-      });
+      // Optionnel : Rejeter ou Forcer le montant calculé (ici on log juste pour debug, mais en prod il vaut mieux rejeter ou corriger)
+      // return res.status(400).json({ ... });
     }
 
     // 11. Calculer le solde plateforme
     const platformSolde = (p2Total - p1Total) + finalDeliveryFee + appFee - promoDiscount;
-    console.log(`🧮 Platform solde: (${p2Total} - ${p1Total}) + ${finalDeliveryFee} + ${appFee} - ${promoDiscount} = ${platformSolde}`);
 
     // 12. Créer la commande
     const orderData = {
@@ -196,7 +197,7 @@ exports.createOrder = async (req, res) => {
       items: formattedItems,
       deliveryAddress,
       paymentMethod: paymentMethod === 'card' ? 'online' : paymentMethod,
-      totalAmount,
+      totalAmount: totalAmountAfterPromo, // On utilise le montant calculé par sécurité
       clientProductsPrice: p2Total,
       restaurantPayout: p1Total,
       deliveryFee: finalDeliveryFee,
@@ -206,29 +207,19 @@ exports.createOrder = async (req, res) => {
       p2Total,
       finalAmount: totalAmountAfterPromo,
       status: 'pending',
-      zone: zoneId || null,
-      distance: distance || null,
+      zone: matchedZoneId || null,
+      distance: calculatedDistance || null,
       appliedPromo: appliedPromo ? appliedPromo._id : null,
-      // Champs optionnels pour compatibilité
       promo: appliedPromo ? appliedPromo._id : null,
       cardInfo: cardInfo || undefined,
       subtotal: subtotal || p2Total,
     };
 
-    console.log('💾 Creating order with data:', orderData);
-
+    console.log('💾 Creating order...');
     const createdOrder = await Order.create(orderData);
-    console.log('✅ Order created successfully:', { 
-      id: createdOrder._id, 
-      status: createdOrder.status, 
-      paymentMethod: createdOrder.paymentMethod,
-      platformSolde: createdOrder.platformSolde
-    });
 
     res.status(201).json({
-      message: appliedPromo 
-        ? `Promo "${appliedPromo.name}" appliquée !` 
-        : 'Commande créée sans promo',
+      message: appliedPromo ? `Promo "${appliedPromo.name}" appliquée !` : 'Commande créée avec succès',
       order: {
         ...createdOrder.toObject(),
         promoName: appliedPromo ? appliedPromo.name : null,
@@ -245,10 +236,6 @@ exports.createOrder = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error creating order:', error);
-    console.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
-    });
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };

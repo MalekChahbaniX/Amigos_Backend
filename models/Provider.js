@@ -26,12 +26,8 @@ const providerSchema = new mongoose.Schema({
     type: String,
   },
   location: {
-    latitude: {
-      type: Number,
-    },
-    longitude: {
-      type: Number,
-    },
+    latitude: { type: Number, required: true }, // Rendre obligatoire pour le calcul
+    longitude: { type: Number, required: true }, // Rendre obligatoire pour le calcul
     address: String
   },
   image: {
@@ -71,6 +67,8 @@ const providerSchema = new mongoose.Schema({
 providerSchema.index({ name: 1 });
 providerSchema.index({ type: 1 });
 providerSchema.index({ status: 1 });
+providerSchema.index({ location: '2dsphere' }); 
+
 
 const Provider = mongoose.model('Provider', providerSchema);
 module.exports = Provider;

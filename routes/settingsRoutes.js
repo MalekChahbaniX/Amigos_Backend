@@ -10,6 +10,11 @@ const {
   updateNotificationSettings,
   getSecuritySettings,
   updateSecuritySettings,
+  updateLocation,
+  getUserAddresses,
+  addAddress,
+  updateAddress,
+  deleteAddress,
 } = require('../controllers/settingsController');
 
 // All settings routes require authentication
@@ -17,6 +22,7 @@ const {
 
 router.get('/profile', getProfile);
 router.put('/profile', updateProfile);
+router.put('/location', updateLocation);
 router.put('/password', changePassword);
 
 router.get('/app', getAppSettings);
@@ -27,5 +33,11 @@ router.put('/notifications', updateNotificationSettings);
 
 router.get('/security', getSecuritySettings);
 router.put('/security', updateSecuritySettings);
+
+// Routes pour les adresses
+router.get('/addresses/:userId', getUserAddresses);
+router.post('/addresses', addAddress);
+router.put('/addresses/:addressId', updateAddress);
+router.delete('/addresses/:addressId', deleteAddress);
 
 module.exports = router;

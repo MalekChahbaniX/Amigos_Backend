@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
+  testConnection,
   registerUser,
   loginUser,
   verifyOTP,
@@ -11,6 +12,9 @@ const {
   loginDeliverer,
   verifyDelivererOTP
 } = require('../controllers/authController');
+
+// Route de test de connexion (doit être en premier)
+router.get('/test', testConnection);
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
