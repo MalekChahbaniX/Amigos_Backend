@@ -29,7 +29,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['client', 'superAdmin','deliverer'],
+    enum: ['client', 'superAdmin', 'deliverer'],
     default: 'client',
   },
   email: {
@@ -38,7 +38,7 @@ const userSchema = new mongoose.Schema({
       return this.role === 'superAdmin';
     },
     unique: true,
-    sparse: true, // Allow multiple null values but unique non-null values
+    sparse: true,
     lowercase: true,
     validate: {
       validator: function(v) {
@@ -60,7 +60,14 @@ const userSchema = new mongoose.Schema({
   location: {
     latitude: Number,
     longitude: Number,
-    address: String
+    address: String,
+    zone: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Zone'
+    },
+    zoneName: String,
+    deliveryPrice: Number,
+    distance: Number
   },
   status: {
     type: String,
@@ -82,6 +89,8 @@ const userSchema = new mongoose.Schema({
 // Index pour améliorer les performances
 userSchema.index({ phoneNumber: 1 });
 userSchema.index({ isVerified: 1 });
+userSchema.index({ 'location.zone': 1 });
 
 const User = mongoose.model('User', userSchema);
+
 module.exports = User;
