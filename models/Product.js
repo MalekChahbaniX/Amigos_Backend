@@ -51,6 +51,14 @@ const productSchema = new mongoose.Schema(
         required: false,
       },
     ],
+    // SIZE SYSTEM FIELDS - Optional feature for restaurant products
+sizes: [{
+    name: { type: String, required: true, trim: true },
+    price: { type: Number, required: true, min: 0 },
+    stock: { type: Number, default: 0 },
+    p1: { type: Number, default: 0 },
+    p2: { type: Number, default: 0 },
+}],
     // COMMISSION SYSTEM FIELDS
     csR: {
       type: Number,
@@ -97,6 +105,14 @@ productSchema.pre('save', function(next) {
   
   // Calculate P2 (prix client)
   this.p2 = P * (1 + csC / 100);
+  
+  // Calculate P1 and P2 for each size if sizes exist
+  if (this.sizes && this.sizes.length > 0) {
+    this.sizes.forEach(size => {
+      size.p1 = size.price * (1 - csR / 100);
+      size.p2 = size.price * (1 + csC / 100);
+    });
+  }
   
   next();
 });

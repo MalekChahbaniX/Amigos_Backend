@@ -65,7 +65,10 @@ const updateAppSettings = async (req, res) => {
 
     if (appFee !== undefined) updateData.appFee = appFee;
     if (currency !== undefined) updateData.currency = currency;
-    if (updatedBy !== undefined) updateData.updatedBy = updatedBy;
+    // Ne pas inclure updatedBy si ce n'est pas fourni
+    if (updatedBy !== undefined && updatedBy !== null && updatedBy !== '') {
+      updateData.updatedBy = updatedBy;
+    }
 
     // Création ou mise à jour des paramètres
     const setting = await AppSetting.findOneAndUpdate(
@@ -115,9 +118,13 @@ const resetAppSettings = async (req, res) => {
     const defaultSettings = {
       appFee: 1.0,
       currency: 'TND',
-      updatedBy,
       updatedAt: new Date()
     };
+
+    // N'ajouter updatedBy que s'il est fourni
+    if (updatedBy !== undefined && updatedBy !== null && updatedBy !== '') {
+      defaultSettings.updatedBy = updatedBy;
+    }
 
     const setting = await AppSetting.findOneAndUpdate(
       {},
