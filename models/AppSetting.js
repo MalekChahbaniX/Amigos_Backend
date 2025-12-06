@@ -11,7 +11,7 @@ const appSettingSchema = new mongoose.Schema({
     default: 'TND',
   },
   updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.Mixed, // Accept both ObjectId and String
     ref: 'User',
   },
   updatedAt: {

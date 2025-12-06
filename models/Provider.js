@@ -33,6 +33,9 @@ const providerSchema = new mongoose.Schema({
   image: {
     type: String,
   },
+  profileImage: {
+    type: String, 
+  },
   timeEstimate: {
     type: String,
   },
