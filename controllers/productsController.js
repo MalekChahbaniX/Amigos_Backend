@@ -70,7 +70,8 @@ exports.getProducts = async (req, res) => {
         status: product.status,
         image: product.image,
         options: options,
-        availability: product.availability
+        availability: product.availability,
+        sizes: product.sizes || []
       };
     });
 
@@ -135,7 +136,8 @@ exports.getProductById = async (req, res) => {
       status: product.status,
       image: product.image,
       options: options,
-      availability: product.availability
+      availability: product.availability,
+      sizes: product.sizes || []
     };
 
     res.status(200).json(formattedProduct);
@@ -230,7 +232,8 @@ exports.createProduct = async (req, res) => {
       availability,   // NEW
       csR,            // NEW: Restaurant commission
       csC,            // NEW: Client commission
-      deliveryCategory // NEW: Delivery category
+      deliveryCategory, // NEW: Delivery category
+      sizes           // NEW: Array of sizes
     } = req.body;
 
     // Validation
@@ -286,6 +289,7 @@ exports.createProduct = async (req, res) => {
       p1: p1,
       p2: p2,
       deliveryCategory: deliveryCategory || 'restaurant', // Default to restaurant
+      sizes: sizes || [], // Array of sizes
       ...(image && { image }),
     });
 
@@ -330,6 +334,7 @@ exports.createProduct = async (req, res) => {
         optionGroups: product.optionGroups.map(g => g._id.toString()),
         options: formattedOptions,
         availability: product.availability,
+        sizes: product.sizes || []
       },
     });
   } catch (error) {
@@ -358,7 +363,8 @@ exports.updateProduct = async (req, res) => {
       availability,   // NEW
       csR,            // NEW: Restaurant commission
       csC,            // NEW: Client commission
-      deliveryCategory // NEW: Delivery category
+      deliveryCategory, // NEW: Delivery category
+      sizes           // NEW: Array of sizes
     } = req.body;
 
     const updateData = {};
@@ -380,6 +386,9 @@ exports.updateProduct = async (req, res) => {
     
     // NEW: Update availability settings
     if (availability !== undefined) updateData.availability = availability;
+    
+    // NEW: Update sizes
+    if (sizes !== undefined) updateData.sizes = sizes;
 
     // Provider update
     if (providerId) {
@@ -458,6 +467,7 @@ exports.updateProduct = async (req, res) => {
         optionGroups: product.optionGroups.map(g => g._id.toString()),
         options: formattedOptions,
         availability: product.availability,
+        sizes: product.sizes || []
       },
     });
   } catch (error) {
