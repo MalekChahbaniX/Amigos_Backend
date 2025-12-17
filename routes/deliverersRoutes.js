@@ -5,16 +5,17 @@ const {
   getDelivererById,
   createDeliverer,
   updateDelivererStatus,
-  deleteDeliverer
+  deleteDeliverer,
+  getDelivererSessions
 } = require('../controllers/deliverersController');
+const { protect, isAdminOrSuperAdmin } = require('../middleware/auth');
 
-// All deliverer routes require authentication
-// You can add middleware here to verify JWT token and super admin role
-
-router.get('/', getDeliverers);
-router.get('/:id', getDelivererById);
-router.post('/', createDeliverer);
-router.put('/:id/status', updateDelivererStatus);
-router.delete('/:id', deleteDeliverer);
+// Deliverer routes: accessible to super admins and city admins (protected)
+router.get('/', protect, isAdminOrSuperAdmin, getDeliverers);
+router.get('/sessions', protect, isAdminOrSuperAdmin, getDelivererSessions);
+router.get('/:id', protect, isAdminOrSuperAdmin, getDelivererById);
+router.post('/', protect, isAdminOrSuperAdmin, createDeliverer);
+router.put('/:id/status', protect, isAdminOrSuperAdmin, updateDelivererStatus);
+router.delete('/:id', protect, isAdminOrSuperAdmin, deleteDeliverer);
 
 module.exports = router;

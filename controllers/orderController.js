@@ -4,6 +4,8 @@ const Promo = require('../models/Promo');
 const AppSetting = require('../models/AppSetting');
 const Zone = require('../models/Zone');
 const Product = require('../models/Product');
+const { calculateDistance } = require('../utils/distanceCalculator');
+// notifyNewOrder is now available globally from server.js
 
 // @desc    Create a new order with complete pricing logic
 // @route   POST /api/orders
@@ -103,6 +105,7 @@ exports.createOrder = async (req, res) => {
     let hasRestaurant = false;
     let hasCourse = false;
     let hasPharmacy = false;
+    let hasStore = false;
     const formattedItems = [];
 
     for (const item of items) {
@@ -117,6 +120,7 @@ exports.createOrder = async (req, res) => {
         if (deliveryCategory === 'restaurant') hasRestaurant = true;
         if (deliveryCategory === 'course') hasCourse = true;
         if (deliveryCategory === 'pharmacy') hasPharmacy = true;
+        if (deliveryCategory === 'store') hasStore = true;
       } else {
         const P = item.price || 0;
         const csR = (providerData.csRPercent || 5) / 100;
@@ -145,6 +149,7 @@ exports.createOrder = async (req, res) => {
     let deliveryCategory = 'restaurant';
     if (hasCourse) deliveryCategory = 'course';
     else if (hasPharmacy) deliveryCategory = 'pharmacy';
+    else if (hasStore) deliveryCategory = 'store';
 
     // 5. Utiliser les frais calculés
     const finalDeliveryFee = calculatedDeliveryFee;
@@ -205,6 +210,11 @@ exports.createOrder = async (req, res) => {
       platformSolde,
       p1Total,
       p2Total,
+      // solde fields (to be calculated by balanceCalculator)
+      soldeSimple: 0,
+      soldeDual: 0,
+      soldeTriple: 0,
+      soldeAmigos: 0,
       finalAmount: totalAmountAfterPromo,
       status: 'pending',
       zone: matchedZoneId || null,
@@ -215,8 +225,79 @@ exports.createOrder = async (req, res) => {
       subtotal: subtotal || p2Total,
     };
 
-    console.log('💾 Creating order...');
+    // Compute soldeSimple and soldeAmigos using balanceCalculator
+    try {
+      const balanceCalc = require('../services/balanceCalculator');
+      orderData.soldeSimple = balanceCalc.calculateSoldeSimple({ clientProductsPrice: p2Total, restaurantPayout: p1Total });
+      // For a single order, soldeDual/Triple default to 0; soldeAmigos includes appFee
+      orderData.soldeAmigos = balanceCalc.calculateSoldeAmigos([ { clientProductsPrice: p2Total, restaurantPayout: p1Total } ], appFee);
+    } catch (calcErr) {
+      console.error('Erreur calcul solde:', calcErr);
+    }
+
+    // PROTECTION WINDOW: Set protectionEnd = createdAt + 3 minutes (180 seconds = 180000ms)
+    const protectionDurationMs = 3 * 60 * 1000; // 3 minutes
+    const protectionEndTime = new Date(Date.now() + protectionDurationMs);
+    orderData.protectionEnd = protectionEndTime;
+
+    // Prepare delay variables in outer scope to avoid ReferenceError
+    let delayMinutes = null;
+    let scheduledForTime = null;
+
+    // Normalize urgent flag from possible client representations
+    const urgentFlag = req.body.urgent === true || req.body.urgent === 'true' || req.body.urgent === 1 || req.body.urgent === '1';
+    const isUrgent = req.body.orderType === 'A4' || urgentFlag;
+
+    if (isUrgent) {
+      // A4 orders bypass delays and are never grouped
+      orderData.orderType = 'A4';
+      orderData.processingDelay = 0;
+      orderData.scheduledFor = null;
+      orderData.isUrgent = true;
+      orderData.canBeGrouped = false; // Explicitly mark as non-groupable
+      console.log('🔥 Marking order as URGENT (A4) - bypassing processing delay and excluded from grouping');
+    } else {
+      // Set processing delay (5-10 minutes) for grouping eligibility
+      delayMinutes = Math.floor(Math.random() * 6) + 5; // Random between 5-10
+      scheduledForTime = new Date(Date.now() + delayMinutes * 60 * 1000); // Add delay to current time
+      orderData.processingDelay = delayMinutes;
+      orderData.scheduledFor = scheduledForTime;
+      orderData.canBeGrouped = true;
+
+      console.log('💾 Creating order with processing delay of', delayMinutes, 'minutes, scheduled for', scheduledForTime.toISOString());
+    }
     const createdOrder = await Order.create(orderData);
+
+    // Notify deliverers about new order. Urgent orders are notified immediately.
+    try {
+      if (createdOrder.isUrgent) {
+        // Send immediate notification for urgent orders
+        try {
+          await global.notifyNewOrder(createdOrder);
+          console.log('📢 Immediate URGENT notification sent for order', createdOrder._id);
+        } catch (err) {
+          console.error('❌ Immediate URGENT notification failed for order', createdOrder._id, err);
+        }
+      } else {
+        const notifyDelayMs = Math.max(0, new Date(createdOrder.scheduledFor).getTime() - Date.now());
+        if (notifyDelayMs > 0) {
+          console.log(`⏳ Scheduling deliverer notification in ${Math.round(notifyDelayMs/1000)}s`);
+          setTimeout(async () => {
+            try {
+              await global.notifyNewOrder(createdOrder);
+              console.log('📢 Delayed notification sent for order', createdOrder._id);
+            } catch (err) {
+              console.error('❌ Delayed notification failed for order', createdOrder._id, err);
+            }
+          }, notifyDelayMs);
+        } else {
+          await global.notifyNewOrder(createdOrder);
+          console.log('📢 Notification sent for order', createdOrder._id);
+        }
+      }
+    } catch (notificationError) {
+      console.error('❌ Failed to schedule/send notification:', notificationError);
+    }
 
     res.status(201).json({
       message: appliedPromo ? `Promo "${appliedPromo.name}" appliquée !` : 'Commande créée avec succès',
@@ -282,10 +363,16 @@ exports.getOrdersBySuperAdmin = async (req, res) => {
 // @access  Private (superAdmin)
 exports.getAvailableOrders = async (req, res) => {
   try {
-    const availableOrders = await Order.find({ status: 'pending', deliveryDriver: null })
+    const now = new Date();
+    // Prioritize urgent orders by sorting on `isUrgent` first, then newest
+    const availableOrders = await Order.find({
+      status: 'pending',
+      deliveryDriver: null,
+      $or: [ { scheduledFor: null }, { scheduledFor: { $lte: now } } ]
+    })
       .populate('client', 'firstName lastName phoneNumber location')
       .populate('provider', 'name type phone address')
-      .sort({ createdAt: -1 });
+      .sort({ isUrgent: -1, createdAt: -1 });
     
     // Format available orders with detailed information for livreurs
     const formattedOrders = availableOrders.map(order => ({
@@ -317,6 +404,7 @@ exports.getAvailableOrders = async (req, res) => {
       finalAmount: order.finalAmount,
       createdAt: order.createdAt,
       platformSolde: order.platformSolde,
+      urgent: !!order.isUrgent,
     }));
     
     res.json(formattedOrders);
@@ -333,20 +421,30 @@ exports.assignOrder = async (req, res) => {
   const { deliveryDriverId } = req.body;
 
   try {
-    const order = await Order.findById(orderId)
-      .populate('client', 'firstName lastName phoneNumber location')
-      .populate('provider', 'name type phone address');
+    // Use findOneAndUpdate with atomic operation to prevent race conditions
+    const order = await Order.findOneAndUpdate(
+      {
+        _id: orderId,
+        status: 'pending',
+        deliveryDriver: { $exists: false }
+      },
+      {
+        deliveryDriver: deliveryDriverId,
+        status: 'accepted',
+        assignedAt: new Date()
+      },
+      { new: true }
+    )
+    .populate('client', 'firstName lastName phoneNumber location')
+    .populate('provider', 'name type phone address');
     
     if (!order) {
-      return res.status(404).json({ message: 'Commande non trouvée' });
-    }
-    if (order.status !== 'pending') {
-      return res.status(400).json({ message: 'La commande ne peut pas être assignée dans son état actuel' });
+      return res.status(400).json({
+        message: 'La commande ne peut pas être assignée (soit déjà assignée, soit non trouvée)'
+      });
     }
 
-    order.deliveryDriver = deliveryDriverId;
-    order.status = 'accepted';
-    await order.save();
+    console.log(`✅ Order ${orderId} assigned to deliverer ${deliveryDriverId}`);
 
     // Return complete order details for the livreur
     const formattedOrder = {
@@ -423,8 +521,33 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    // PROTECTION WINDOW: Prevent cancellation during protection period (first 3 minutes)
+    if (status === 'cancelled' && order.status === 'pending') {
+      const now = Date.now();
+      if (order.protectionEnd && new Date(order.protectionEnd).getTime() > now) {
+        const remainingMs = new Date(order.protectionEnd).getTime() - now;
+        const remainingSec = Math.ceil(remainingMs / 1000);
+        return res.status(403).json({ 
+          message: `Order is protected from cancellation. Please wait ${remainingSec} seconds.`,
+          protectionEnd: order.protectionEnd,
+          remainingSeconds: remainingSec
+        });
+      }
+    }
+
     order.status = status;
     await order.save();
+
+    // If delivered, compute solde fields (use shared helper)
+    if (status === 'delivered') {
+      try {
+        const balanceCalc = require('../services/balanceCalculator');
+        await balanceCalc.updateOrderSoldes(order);
+      } catch (calcErr) {
+        console.error('Error calculating solde on status update:', calcErr);
+      }
+    }
+
     res.json({ message: 'Order status updated successfully', order });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });

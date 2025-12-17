@@ -10,11 +10,14 @@ const {
   loginSuperAdmin,
   registerDeliverer,
   loginDeliverer,
-  verifyDelivererOTP
+  verifyDelivererOTP,
+  registerAdmin,
+  loginAdmin,
+  registerProvider,
+  loginProvider
 } = require('../controllers/authController');
+const OTPService = require('../services/otpService');
 
-// Route de test de connexion (doit être en premier)
-router.get('/test', testConnection);
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
@@ -27,5 +30,15 @@ router.post('/register-super-admin', registerSuperAdmin);
 router.post('/register-deliverer', registerDeliverer);
 router.post('/login-deliverer', loginDeliverer);
 router.post('/verify-deliverer', verifyDelivererOTP);
+
+// Routes pour les admins
+router.post('/register-admin', registerAdmin);
+router.post('/login-admin', loginAdmin);
+
+// Routes pour les prestataires
+router.post('/register-provider', registerProvider);
+router.post('/login-provider', loginProvider);
+
+module.exports = router;
 
 module.exports = router;

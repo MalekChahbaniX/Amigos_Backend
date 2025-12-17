@@ -1,5 +1,7 @@
 const Order = require('../models/Order');
 const User = require('../models/User');
+const Session = require('../models/Session');
+const balanceCalc = require('../services/balanceCalculator');
 const { protect, isDeliverer } = require('../middleware/auth');
 
 // @desc    Get orders assigned to a deliverer
@@ -58,7 +60,7 @@ exports.getDelivererOrders = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -70,13 +72,22 @@ exports.getDelivererAvailableOrders = async (req, res) => {
   try {
     const delivererId = req.user.id;
     
+    const now = new Date();
+    // PROTECTION WINDOW: Only show orders where:
+    // 1. protectionEnd <= now (protection expired), OR
+    // 2. isUrgent: true (urgent orders bypass protection)
     const availableOrders = await Order.find({ 
       status: 'pending', 
-      deliveryDriver: null 
+      deliveryDriver: null,
+      $or: [
+        { $and: [{ protectionEnd: { $lte: now } }, { isUrgent: false }] },  // Non-urgent orders after protection
+        { $and: [{ isUrgent: true }, { protectionEnd: { $lte: now } }] }     // Urgent orders (but still respect protection if it exists)
+      ],
+      $or: [ { scheduledFor: null }, { scheduledFor: { $lte: now } } ]
     })
       .populate('client', 'firstName lastName phoneNumber location')
       .populate('provider', 'name type phone address')
-      .sort({ createdAt: -1 });
+      .sort({ isUrgent: -1, createdAt: -1 });
     
     // Format available orders
     const formattedOrders = availableOrders.map(order => ({
@@ -108,6 +119,8 @@ exports.getDelivererAvailableOrders = async (req, res) => {
       finalAmount: order.finalAmount,
       createdAt: order.createdAt,
       platformSolde: order.platformSolde,
+      urgent: !!order.isUrgent,
+      urgentBadge: order.isUrgent ? 'URGENT' : undefined,
     }));
     
     res.json({
@@ -120,7 +133,7 @@ exports.getDelivererAvailableOrders = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -159,6 +172,7 @@ exports.acceptOrder = async (req, res) => {
     }
 
     // Assign the order to the deliverer
+    // orderType is NOT set here; it will be assigned when transitioning to 'in_delivery'
     order.deliveryDriver = delivererId;
     order.status = 'accepted';
     await order.save();
@@ -205,7 +219,7 @@ exports.acceptOrder = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -256,7 +270,7 @@ exports.rejectOrder = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -296,7 +310,8 @@ exports.updateOrderStatus = async (req, res) => {
 
     // Define valid status transitions
     const validTransitions = {
-      'accepted': ['in_delivery', 'cancelled'],
+      'accepted': ['collected', 'cancelled'],
+      'collected': ['in_delivery', 'cancelled'],
       'in_delivery': ['delivered', 'cancelled']
     };
 
@@ -310,8 +325,183 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
+    // HANDLE 'collected' STATUS: Manage provider payment confirmation
+    if (status === 'collected') {
+      const { providerPaymentMode } = req.body;
+      
+      if (!providerPaymentMode) {
+        return res.status(400).json({
+          success: false,
+          message: 'providerPaymentMode est requis pour confirmer la collecte'
+        });
+      }
+
+      // For grouped orders, handle multiple payment modes
+      if (order.isGrouped && order.groupedOrders && order.groupedOrders.length > 0) {
+        // For grouped orders, expect an array of payment modes
+        if (!Array.isArray(providerPaymentMode)) {
+          return res.status(400).json({
+            success: false,
+            message: 'Pour les commandes groupées, providerPaymentMode doit être un array'
+          });
+        }
+        order.providerPaymentMode = providerPaymentMode; // Array of {provider, mode}
+      } else {
+        // For single orders, expect a string: 'especes' or 'facture'
+        if (typeof providerPaymentMode !== 'string' || !['especes', 'facture'].includes(providerPaymentMode)) {
+          return res.status(400).json({
+            success: false,
+            message: 'providerPaymentMode doit être "especes" ou "facture"'
+          });
+        }
+        order.providerPaymentMode = providerPaymentMode;
+      }
+
+      console.log(`💰 Order ${order._id}: Payment confirmed - mode=${JSON.stringify(providerPaymentMode)}`);
+    }
+
+    // CALCULATE ORDERTYPE when transitioning to 'in_delivery'
+    if (status === 'in_delivery') {
+      // Determine orderType based on grouping and urgency
+      // A1 = single (no grouped), not urgent
+      // A2 = dual (2 grouped)
+      // A3 = triple (3 grouped)
+      // A4 = urgent
+      if (order.isUrgent) {
+        order.orderType = 'A4';
+      } else if (order.groupedOrders && order.groupedOrders.length >= 3) {
+        order.orderType = 'A3';
+      } else if (order.groupedOrders && order.groupedOrders.length >= 2) {
+        order.orderType = 'A2';
+      } else {
+        order.orderType = 'A1';
+      }
+      
+      console.log(`📦 Order ${order._id}: Assigned orderType=${order.orderType} (grouped=${order.groupedOrders?.length || 0}, urgent=${order.isUrgent})`);
+      
+      // CALCULATE SOLDES based on orderType and grouped orders
+      try {
+        // Populate groupedOrders if they are just IDs
+        if (order.groupedOrders && order.groupedOrders.length > 0 && typeof order.groupedOrders[0] === 'object' && !order.groupedOrders[0].clientProductsPrice) {
+          await order.populate('groupedOrders');
+        }
+        const groupedSolde = await balanceCalc.calculateSoldesByOrderType(order);
+        if (groupedSolde !== null) {
+          // For grouped orders, use combined solde
+          order.soldeAmigos = groupedSolde;
+        }
+        console.log(`💰 Order ${order._id}: Calculated soldes (A${order.orderType.slice(1)}) - soldeAmigos=${order.soldeAmigos})`);
+      } catch (soldeErr) {
+        console.error('Error calculating soldes for orderType:', soldeErr);
+      }
+    }
+
     order.status = status;
     await order.save();
+
+    // If delivered, compute solde fields and persist (real-time calculation)
+    if (status === 'delivered') {
+      try {
+        const updatedOrder = await balanceCalc.updateOrderSoldes(order);
+
+        // Update deliverer's daily balance record
+        try {
+          const deliverer = await User.findById(delivererId);
+          if (deliverer) {
+            const today = new Date();
+            today.setHours(0,0,0,0);
+
+            // Find existing entry for today
+            let entryIndex = -1;
+            if (Array.isArray(deliverer.dailyBalance)) {
+              entryIndex = deliverer.dailyBalance.findIndex(e => {
+                if (!e || !e.date) return false;
+                const d = new Date(e.date);
+                d.setHours(0,0,0,0);
+                return d.getTime() === today.getTime();
+              });
+            } else {
+              deliverer.dailyBalance = [];
+            }
+
+            if (entryIndex >= 0) {
+              // Append order and update totals
+              deliverer.dailyBalance[entryIndex].orders.push(updatedOrder._id);
+              deliverer.dailyBalance[entryIndex].soldeAmigos = Number((deliverer.dailyBalance[entryIndex].soldeAmigos || 0) + (updatedOrder.soldeAmigos || 0));
+              // When a new delivered order is added to today's balance, it should be marked unpaid
+              deliverer.dailyBalance[entryIndex].paid = false;
+              deliverer.dailyBalance[entryIndex].paidAt = null;
+            } else {
+              // Create new entry for today
+              deliverer.dailyBalance.push({
+                date: today,
+                orders: [updatedOrder._id],
+                soldeAmigos: Number(updatedOrder.soldeAmigos || 0),
+                paid: false,
+                paidAt: null
+              });
+            }
+
+            await deliverer.save();
+          }
+        } catch (dbErr) {
+          console.error('Error updating deliverer dailyBalance:', dbErr);
+        }
+
+        // Update provider's daily balance record
+        try {
+          if (updatedOrder.provider) {
+            const Provider = require('../models/Provider');
+            const provider = await Provider.findById(updatedOrder.provider);
+            if (provider) {
+              const today = new Date();
+              today.setHours(0,0,0,0);
+
+              // Find existing entry for today
+              let entryIndex = -1;
+              if (Array.isArray(provider.dailyBalance)) {
+                entryIndex = provider.dailyBalance.findIndex(db => {
+                  if (!db || !db.date) return false;
+                  const d = new Date(db.date);
+                  d.setHours(0,0,0,0);
+                  return d.getTime() === today.getTime();
+                });
+              } else {
+                provider.dailyBalance = [];
+              }
+
+              const payout = updatedOrder.restaurantPayout || 0;
+
+              if (entryIndex >= 0) {
+                // Append order and update total payout
+                provider.dailyBalance[entryIndex].orders.push(updatedOrder._id);
+                provider.dailyBalance[entryIndex].totalPayout = Number((provider.dailyBalance[entryIndex].totalPayout || 0) + payout);
+                // Mark as unpaid when new order added
+                provider.dailyBalance[entryIndex].paid = false;
+                provider.dailyBalance[entryIndex].paidAt = null;
+              } else {
+                // Create new entry for today
+                provider.dailyBalance.push({
+                  date: today,
+                  orders: [updatedOrder._id],
+                  totalPayout: Number(payout),
+                  paymentMode: 'especes',
+                  paid: false,
+                  paidAt: null
+                });
+              }
+
+              await provider.save();
+              console.log(`💰 Provider ${updatedOrder.provider}: Daily balance updated - payout=${payout}`);
+            }
+          }
+        } catch (providerErr) {
+          console.error('Error updating provider dailyBalance:', providerErr);
+        }
+      } catch (calcErr) {
+        console.error('Error calculating solde after delivery:', calcErr);
+      }
+    }
     
     res.json({ 
       success: true,
@@ -327,7 +517,7 @@ exports.updateOrderStatus = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -376,6 +566,9 @@ exports.getDelivererEarnings = async (req, res) => {
       }
     });
 
+    // Include dailyBalance entries for the deliverer
+    const deliverer = await User.findById(delivererId).select('dailyBalance');
+
     res.json({
       success: true,
       earnings: {
@@ -385,14 +578,15 @@ exports.getDelivererEarnings = async (req, res) => {
         deliveredCount: deliveredOrders.length,
         cancelledCount: cancelledOrders.length,
         monthly: Object.values(monthlyEarnings).sort((a, b) => b.month - a.month)
-      }
+      },
+      dailyBalances: (deliverer && Array.isArray(deliverer.dailyBalance)) ? deliverer.dailyBalance : []
     });
   } catch (error) {
     console.error('Error in getDelivererEarnings:', error);
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -450,7 +644,7 @@ exports.getDelivererProfile = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -497,7 +691,7 @@ exports.updateDelivererLocation = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -522,7 +716,346 @@ exports.logoutDeliverer = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
+  }
+};
+
+// @desc    Start deliverer session (clock in)
+// @route   POST /api/deliverers/session/start
+// @access  Private (deliverer)
+exports.startSession = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    if (!req.user || req.user.role !== 'deliverer') {
+      return res.status(403).json({ message: 'Accès refusé' });
+    }
+
+    // Prevent multiple active sessions for the same deliverer today
+    const today = new Date();
+    const startOfToday = new Date(today);
+    startOfToday.setHours(0,0,0,0);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+    // Check user's currentSession first
+    let existingSession = null;
+    const user = await User.findById(delivererId).select('+currentSession +sessionActive +sessionDate');
+    if (user && user.currentSession) {
+      const s = await Session.findById(user.currentSession);
+      if (s && s.active) {
+        const sd = new Date(s.startTime);
+        if (sd >= startOfToday && sd < startOfTomorrow) {
+          existingSession = s;
+        }
+      }
+    }
+
+    // If none, search for an active session for today in Session collection
+    if (!existingSession) {
+      existingSession = await Session.findOne({
+        deliverer: delivererId,
+        active: true,
+        startTime: { $gte: startOfToday, $lt: startOfTomorrow }
+      });
+    }
+
+    if (existingSession) {
+      // Ensure User fields are synchronized
+      await User.findByIdAndUpdate(delivererId, {
+        currentSession: existingSession._id,
+        sessionDate: startOfToday,
+        sessionActive: true
+      });
+
+      return res.status(200).json({ success: true, message: 'Session déjà active', session: existingSession });
+    }
+
+    // Create a new Session document and attach it to the user
+    const session = await Session.create({ deliverer: delivererId });
+    const sDate = new Date(session.startTime);
+    sDate.setHours(0,0,0,0);
+
+    await User.findByIdAndUpdate(delivererId, {
+      currentSession: session._id,
+      sessionDate: sDate,
+      sessionActive: true
+    });
+
+    res.status(200).json({ success: true, message: 'Session démarrée', session: session });
+  } catch (error) {
+    console.error('Error in startSession:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Stop deliverer session (clock out)
+// @route   POST /api/deliverers/session/stop
+// @access  Private (deliverer)
+exports.stopSession = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    if (!req.user || req.user.role !== 'deliverer') {
+      return res.status(403).json({ message: 'Accès refusé' });
+    }
+
+    const deliverer = await User.findById(delivererId).select('+currentSession +sessionDate +sessionActive');
+
+    if (!deliverer || !deliverer.currentSession) {
+      return res.status(400).json({ success: false, message: 'Aucune session active à terminer' });
+    }
+
+    // Load session even if it started on a previous day — allow closing old sessions
+    const session = await Session.findById(deliverer.currentSession);
+    if (!session) {
+      // If the session referenced on user does not exist, just clear the user fields
+      await User.findByIdAndUpdate(delivererId, { currentSession: null, sessionActive: false });
+      return res.status(200).json({ success: true, message: 'Session nettoyée (session introuvable)' });
+    }
+
+    // Close the session
+    session.endTime = new Date();
+    session.active = false;
+    await session.save();
+
+    // Update user fields to reflect closed session
+    await User.findByIdAndUpdate(delivererId, {
+      currentSession: null,
+      sessionActive: false,
+      // keep sessionDate as the session's start date (date-only)
+      sessionDate: (function() {
+        const d = new Date(session.startTime);
+        d.setHours(0,0,0,0);
+        return d;
+      })()
+    });
+
+    res.status(200).json({ success: true, message: 'Session terminée', session: session });
+  } catch (error) {
+    console.error('Error in stopSession:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get past sessions for the authenticated deliverer
+// @route   GET /api/deliverer/sessions
+// @access  Private (deliverer)
+exports.getDelivererSessions = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    const skip = (page - 1) * limit;
+
+    const filter = { deliverer: delivererId };
+
+    const [total, sessions] = await Promise.all([
+      Session.countDocuments(filter),
+      Session.find(filter)
+        .sort({ startTime: -1 })
+        .skip(skip)
+        .limit(limit)
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    res.status(200).json({
+      success: true,
+      page,
+      limit,
+      total,
+      totalPages,
+      sessions
+    });
+  } catch (error) {
+    console.error('Error in getDelivererSessions:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get deliverer's daily balance for today (or specified date)
+// @route   GET /api/deliverers/daily-balance
+// @access  Private (deliverer)
+exports.getDailyBalance = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    const dateParam = req.query.date; // optional YYYY-MM-DD
+
+    // Strictly parse YYYY-MM-DD to avoid timezone issues
+    let targetDate = new Date();
+    if (dateParam) {
+      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(dateParam);
+      if (!m) return res.status(400).json({ success: false, message: 'Invalid date format. Use YYYY-MM-DD' });
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10) - 1; // monthIndex
+      const day = parseInt(m[3], 10);
+      targetDate = new Date(year, month, day);
+    }
+    targetDate.setHours(0,0,0,0);
+
+    // Use $elemMatch to project only the matching dailyBalance element
+    const deliverer = await User.findOne(
+      { _id: delivererId },
+      { dailyBalance: { $elemMatch: { date: targetDate } } }
+    ).populate('dailyBalance.orders');
+
+    if (!deliverer) return res.status(404).json({ success: false, message: 'Deliverer not found' });
+
+    const entry = (deliverer.dailyBalance || [])[0];
+
+    if (!entry) {
+      return res.json({ success: true, dailyBalance: { date: targetDate, orders: [], soldeAmigos: 0, paid: false } });
+    }
+
+    res.json({ success: true, dailyBalance: entry });
+  } catch (error) {
+    console.error('Error in getDailyBalance:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Mark deliverer's daily balance as paid
+// @route   POST /api/deliverers/pay-balance
+// @access  Private (deliverer)
+exports.payDailyBalance = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    const dateParam = req.body.date; // optional YYYY-MM-DD
+
+    // Strictly parse YYYY-MM-DD to avoid timezone issues
+    let targetDate = new Date();
+    if (dateParam) {
+      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(dateParam);
+      if (!m) return res.status(400).json({ success: false, message: 'Invalid date format. Use YYYY-MM-DD' });
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10) - 1;
+      const day = parseInt(m[3], 10);
+      targetDate = new Date(year, month, day);
+    }
+    targetDate.setHours(0,0,0,0);
+
+    const deliverer = await User.findById(delivererId);
+    if (!deliverer) return res.status(404).json({ success: false, message: 'Deliverer not found' });
+
+    let entryIndex = -1;
+    if (Array.isArray(deliverer.dailyBalance)) {
+      entryIndex = deliverer.dailyBalance.findIndex(e => {
+        if (!e || !e.date) return false;
+        const d = new Date(e.date);
+        d.setHours(0,0,0,0);
+        return d.getTime() === targetDate.getTime();
+      });
+    }
+
+    if (entryIndex === -1) {
+      return res.status(404).json({ success: false, message: 'Daily balance not found for date' });
+    }
+
+    deliverer.dailyBalance[entryIndex].paid = true;
+    deliverer.dailyBalance[entryIndex].paidAt = new Date();
+
+    await deliverer.save();
+
+    res.json({ success: true, message: 'Daily balance marked as paid', dailyBalance: deliverer.dailyBalance[entryIndex] });
+  } catch (error) {
+    console.error('Error in payDailyBalance:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get precise statistics for deliverer dashboard (#1)
+// @route   GET /api/deliverer/me/statistics
+// @access  Private (deliverer)
+exports.getDelivererStatistics = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+
+    const deliverer = await User.findById(delivererId);
+    if (!deliverer) {
+      return res.status(404).json({ success: false, message: 'Livreur non trouvé' });
+    }
+
+    // Get today's date at start of day
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Find today's balance entry
+    const todayBalance = deliverer.dailyBalance?.find(db => {
+      const d = new Date(db.date);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime() === today.getTime();
+    });
+
+    // Get all delivered orders for this deliverer
+    const allDeliveredOrders = await Order.find({
+      deliveryDriver: delivererId,
+      status: 'delivered'
+    });
+
+    // Get today's delivered orders
+    const todayDeliveredOrders = allDeliveredOrders.filter(o => {
+      const oDate = new Date(o.createdAt);
+      oDate.setHours(0, 0, 0, 0);
+      return oDate.getTime() === today.getTime();
+    });
+
+    // Get today's cancelled orders
+    const todayCancelledOrders = await Order.find({
+      deliveryDriver: delivererId,
+      status: 'cancelled',
+      createdAt: { $gte: today }
+    });
+
+    // Count by status
+    const totalDelivered = allDeliveredOrders.length;
+    const totalCancelled = (await Order.countDocuments({
+      deliveryDriver: delivererId,
+      status: 'cancelled'
+    })) || 0;
+
+    // Calculate solde amounts
+    const soldeAmigosTodayAmount = todayBalance?.soldeAmigos || 0;
+    const soldeAnnulationTodayAmount = todayBalance?.soldeAnnulation || 0;
+    const cashCollectedToday = Math.max(0, soldeAmigosTodayAmount - soldeAnnulationTodayAmount);
+
+    // Total earnings
+    const totalSoldeAmigos = (deliverer.dailyBalance || []).reduce((sum, db) => sum + (db.soldeAmigos || 0), 0);
+    const totalSoldeAnnulation = (deliverer.dailyBalance || []).reduce((sum, db) => sum + (db.soldeAnnulation || 0), 0);
+
+    res.json({
+      success: true,
+      statistics: {
+        // Badge #1: Amigos CASH (today's soldeAmigos)
+        amigosCashToday: Number(soldeAmigosTodayAmount.toFixed(3)),
+        
+        // Badge #2: Vos CASH (cash collected = soldeAmigos - annulation)
+        yourCashToday: Number(cashCollectedToday.toFixed(3)),
+        
+        // Badge #3: Commandes réalisées (today)
+        ordersCompletedToday: todayDeliveredOrders.length,
+        
+        // Badge #4: Commandes refusées (today) - can be orders rejected or cancelled
+        ordersRejectedToday: todayCancelledOrders.length,
+        
+        // Badge #5: Solde annulation (today)
+        cancellationSoldeToday: Number(soldeAnnulationTodayAmount.toFixed(3)),
+        
+        // Badge #6: Total livreur stats
+        totalDelivered,
+        totalCancelled,
+        totalSoldeAmigos: Number(totalSoldeAmigos.toFixed(3)),
+        totalCancellationSolde: Number(totalSoldeAnnulation.toFixed(3)),
+        
+        // Additional info
+        todayDate: today.toISOString(),
+        delivererName: `${deliverer.firstName} ${deliverer.lastName}`,
+        currency: 'DT'
+      }
+    });
+  } catch (error) {
+    console.error('Error in getDelivererStatistics:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };

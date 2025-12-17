@@ -1,4 +1,6 @@
 const User = require('../models/User');
+const Session = require('../models/Session');
+const Order = require('../models/Order');
 
 // @desc    Get all deliverers with optional search and pagination
 // @route   GET /api/deliverers
@@ -21,6 +23,14 @@ exports.getDeliverers = async (req, res) => {
     searchQuery.role = 'deliverer';
 
     // Get total count for pagination
+    // If the requester is a city admin, limit deliverers to their city
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) {
+        return res.status(403).json({ message: 'Admin sans ville assignée' });
+      }
+      searchQuery.city = req.user.city;
+    }
+
     const totalDeliverers = await User.countDocuments(searchQuery);
 
     // Get deliverers with pagination
@@ -61,7 +71,7 @@ exports.getDeliverers = async (req, res) => {
     console.error('Error fetching deliverers:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des livreurs',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -71,10 +81,13 @@ exports.getDeliverers = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.getDelivererById = async (req, res) => {
   try {
-    const deliverer = await User.findOne({
-      _id: req.params.id,
-      role: 'deliverer'
-    }).select('firstName lastName phoneNumber status createdAt location');
+    const query = { _id: req.params.id, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+
+    const deliverer = await User.findOne(query).select('firstName lastName phoneNumber status createdAt location');
 
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
@@ -99,7 +112,7 @@ exports.getDelivererById = async (req, res) => {
     console.error('Error fetching deliverer:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -136,14 +149,22 @@ exports.createDeliverer = async (req, res) => {
     }
 
     // Create new deliverer
-    const deliverer = await User.create({
+    const newDelivererData = {
       firstName,
       lastName,
       phoneNumber: phone,
       role: 'deliverer',
       status: 'active',
       isVerified: true // Auto-verify deliverers created by admin
-    });
+    };
+
+    // If creator is an admin, associate deliverer to the same city
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      newDelivererData.city = req.user.city;
+    }
+
+    const deliverer = await User.create(newDelivererData);
 
     const formattedDeliverer = {
       id: deliverer._id.toString(),
@@ -166,7 +187,7 @@ exports.createDeliverer = async (req, res) => {
     console.error('Error creating deliverer:', error);
     res.status(500).json({
       message: 'Erreur lors de la création du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -186,11 +207,13 @@ exports.updateDelivererStatus = async (req, res) => {
 
     const status = isAvailable ? 'active' : 'inactive';
 
-    const deliverer = await User.findOneAndUpdate(
-      { _id: req.params.id, role: 'deliverer' },
-      { status },
-      { new: true }
-    );
+    const query = { _id: req.params.id, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+
+    const deliverer = await User.findOneAndUpdate(query, { status }, { new: true });
 
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
@@ -208,7 +231,7 @@ exports.updateDelivererStatus = async (req, res) => {
     console.error('Error updating deliverer status:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du statut',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -218,10 +241,13 @@ exports.updateDelivererStatus = async (req, res) => {
 // @access  Private (Super Admin only)
 exports.deleteDeliverer = async (req, res) => {
   try {
-    const deliverer = await User.findOneAndDelete({
-      _id: req.params.id,
-      role: 'deliverer'
-    });
+    const query = { _id: req.params.id, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+
+    const deliverer = await User.findOneAndDelete(query);
 
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
@@ -235,10 +261,90 @@ exports.deleteDeliverer = async (req, res) => {
     console.error('Error deleting deliverer:', error);
     res.status(500).json({
       message: 'Erreur lors de la suppression du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 }
+
+// @desc    Get all deliverer sessions (admin only)
+// @route   GET /api/deliverers/sessions
+// @access  Private (Super Admin and Admin only)
+exports.getDelivererSessions = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, active } = req.query;
+    
+    // Build query
+    const query = {};
+    
+    // Filter by active status if provided
+    if (active !== undefined) {
+      query.active = active === '1' || active === 'true';
+    }
+    
+    // If the requester is a city admin, limit sessions to deliverers in their city
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) {
+        return res.status(403).json({ message: 'Admin sans ville assignée' });
+      }
+      // Find deliverers in the admin's city
+      const delivererIds = await User.find({
+        role: 'deliverer',
+        city: req.user.city
+      }).select('_id');
+      
+      if (delivererIds.length === 0) {
+        return res.status(200).json({
+          sessions: [],
+          total: 0,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: 0
+        });
+      }
+      
+      query.deliverer = { $in: delivererIds.map(d => d._id) };
+    }
+    
+    // Get total count
+    const totalSessions = await Session.countDocuments(query);
+    
+    // Get sessions with pagination
+    const sessions = await Session.find(query)
+      .populate('deliverer', 'firstName lastName phoneNumber')
+      .sort({ startTime: -1 })
+      .limit(parseInt(limit) * 1)
+      .skip((parseInt(page) - 1) * parseInt(limit));
+    
+    // Format sessions for frontend
+    const formattedSessions = sessions.map(session => ({
+      id: session._id.toString(),
+      deliverer: session.deliverer ? {
+        id: session.deliverer._id.toString(),
+        name: `${session.deliverer.firstName} ${session.deliverer.lastName}`.trim(),
+        phone: session.deliverer.phoneNumber || ''
+      } : null,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      active: session.active
+    }));
+    
+    res.status(200).json({
+      sessions: formattedSessions,
+      total: totalSessions,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(totalSessions / limit)
+    });
+    
+  } catch (error) {
+    console.error('Error fetching deliverer sessions:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération des sessions',
+      error: error.message
+    });
+  }
+};
+
 // @desc    Get deliverer earnings (total solde from delivered orders)
 // @route   GET /api/deliverers/:id/earnings
 // @access  Private (Super Admin only)
@@ -247,10 +353,13 @@ exports.getDelivererEarnings = async (req, res) => {
     const delivererId = req.params.id;
     
     // Validate deliverer exists
-    const deliverer = await User.findOne({
-      _id: delivererId,
-      role: 'deliverer'
-    });
+    const query = { _id: delivererId, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+
+    const deliverer = await User.findOne(query);
     
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
@@ -287,7 +396,7 @@ exports.getDelivererEarnings = async (req, res) => {
     console.error('Error fetching deliverer earnings:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des gains du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -300,11 +409,13 @@ exports.getDelivererStats = async (req, res) => {
     const delivererId = req.params.id;
     
     // Validate deliverer exists
-    const deliverer = await User.findOne({
-      _id: delivererId,
-      role: 'deliverer'
-    });
-    
+    const query = { _id: delivererId, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+
+    const deliverer = await User.findOne(query);
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
     }
@@ -346,6 +457,6 @@ exports.getDelivererStats = async (req, res) => {
     console.error('Error fetching deliverer stats:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des statistiques du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }};

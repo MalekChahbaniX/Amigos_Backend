@@ -7,7 +7,7 @@ const providerSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['restaurant', 'pharmacy', 'course'],
+    enum: ['restaurant', 'pharmacy', 'course', 'store'],
     required: true,
   },
   phone: {
@@ -21,6 +21,9 @@ const providerSchema = new mongoose.Schema({
   email: {
     type: String,
     lowercase: true,
+  },
+  password: {
+    type: String,
   },
   description: {
     type: String,
@@ -61,7 +64,41 @@ const providerSchema = new mongoose.Schema({
     type: Number,
     enum: [0, 5, 10],
     default: 0
-  }
+  },
+  // FINANCIAL TRACKING: Daily balance for providers
+  dailyBalance: [
+    {
+      date: {
+        type: Date,
+        required: true
+      },
+      // Orders delivered on this date for this provider
+      orders: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Order'
+      }],
+      // Total payout from restaurantPayout of orders delivered
+      totalPayout: {
+        type: Number,
+        default: 0
+      },
+      // Payment confirmation details
+      paymentMode: {
+        type: String,
+        enum: ['especes', 'facture', 'virement'],
+        default: 'especes'
+      },
+      // Whether this day's earnings have been paid
+      paid: {
+        type: Boolean,
+        default: false
+      },
+      paidAt: {
+        type: Date,
+        default: null
+      }
+    }
+  ]
 }, {
   timestamps: true
 });
