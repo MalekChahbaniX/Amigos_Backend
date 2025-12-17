@@ -92,7 +92,7 @@ exports.getProducts = async (req, res) => {
     console.error('Error fetching products:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des produits',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -146,7 +146,7 @@ exports.getProductById = async (req, res) => {
     console.error('Error fetching product:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du produit',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -170,7 +170,7 @@ exports.deleteProduct = async (req, res) => {
     console.error('Error deleting product:', error);
     res.status(500).json({
       message: 'Erreur lors de la suppression du produit',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -207,7 +207,7 @@ exports.getProductsByProvider = async (req, res) => {
     console.error('Error fetching products by provider:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des produits',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -341,7 +341,7 @@ exports.createProduct = async (req, res) => {
     console.error('Error creating product:', error);
     res.status(500).json({
       message: 'Erreur lors de la création du produit',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      error:   error.message,
     });
   }
 };

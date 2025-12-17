@@ -18,12 +18,14 @@ async function seedTunisie() {
   try {
     // 1. Création des Providers (fournisseurs)
     const providers = await Provider.insertMany([
-      { name: "Lablabi El Kahena",         type: "restaurant", phone: "+216 22 123 456", address: "Médina de Tunis",          csRPercent: 5,  csCPercent: 0 },
-      { name: "Restaurant Dar Belhadj",    type: "restaurant", phone: "+216 71 123 457", address: "La Marsa",                 csRPercent: 10, csCPercent: 5 },
-      { name: "Pâtisserie Masmoudi",       type: "restaurant", phone: "+216 74 123 458", address: "Sfax Centre",              csRPercent: 5,  csCPercent: 0 },
-      { name: "Brik Danouni",              type: "restaurant", phone: "+216 71 123 459", address: "La Marsa Corniche",        csRPercent: 5,  csCPercent: 0 },
-      { name: "Pharmacie Centrale Tunis",  type: "pharmacy",   phone: "+216 71 123 460", address: "Avenue Habib Bourguiba",                        },
-      { name: "Épicerie Fine Ben Yedder",  type: "course",     phone: "+216 70 123 461", address: "Carthage",                                        },
+      { name: "Lablabi El Kahena",         type: "restaurant", phone: "+216 22 123 456", address: "Médina de Tunis",          location: { latitude: 36.796, longitude: 10.165 }, csRPercent: 5,  csCPercent: 0 },
+      { name: "Restaurant Dar Belhadj",    type: "restaurant", phone: "+216 71 123 457", address: "La Marsa",                 location: { latitude: 36.823, longitude: 10.325 }, csRPercent: 10, csCPercent: 5 },
+      { name: "Pâtisserie Masmoudi",       type: "restaurant", phone: "+216 74 123 458", address: "Sfax Centre",              location: { latitude: 34.740, longitude: 10.760 }, csRPercent: 5,  csCPercent: 0 },
+      { name: "Brik Danouni",              type: "restaurant", phone: "+216 71 123 459", address: "La Marsa Corniche",        location: { latitude: 36.827, longitude: 10.330 }, csRPercent: 5,  csCPercent: 0 },
+      { name: "Pharmacie Centrale Tunis",  type: "pharmacy",   phone: "+216 71 123 460", address: "Avenue Habib Bourguiba",    location: { latitude: 36.801, longitude: 10.176 } },
+      { name: "Épicerie Fine Ben Yedder",  type: "course",     phone: "+216 70 123 461", address: "Carthage",                  location: { latitude: 36.851, longitude: 10.332 } },
+      { name: "Boutique Moda City",        type: "store",      phone: "+216 71 123 462", address: "Centre Commercial Tunis",   location: { latitude: 36.805, longitude: 10.170 }, csRPercent: 8,  csCPercent: 2 },
+      { name: "Tech Store Sfax",           type: "store",      phone: "+216 74 123 463", address: "Route de Gafsa, Sfax",      location: { latitude: 34.743, longitude: 10.765 }, csRPercent: 10, csCPercent: 3 },
     ]);
 
     // 2. Création des ProductOption (options individuelles)
@@ -126,25 +128,32 @@ async function seedTunisie() {
       { name: "Limounada maison 1L", description: "Citronnade fraîche + menthe", price: 8000, category: "Boisson", provider: providers[0]._id, deliveryCategory: "restaurant" },
       { name: "Bouza pistache", description: "Glace artisanale tunisienne", price: 5000, category: "Dessert", provider: providers[2]._id, deliveryCategory: "restaurant" },
 
+      // STORES - VÊTEMENTS & ACCESSOIRES
+      { name: "T-Shirt Coton Premium", description: "T-shirt 100% coton, multi-couleurs disponibles", price: 45000, category: "Vêtements", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Jeans Slim Fit", description: "Jeans classique confortable", price: 120000, category: "Vêtements", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Robe Casual Été", description: "Robe légère parfaite pour l'été", price: 85000, category: "Vêtements", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Sneakers Running", description: "Chaussures de sport haute performance", price: 180000, category: "Chaussures", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Sac à Main Cuir", description: "Sac en cuir véritable style classique", price: 220000, category: "Accessoires", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Ceinture Cuir Marron", description: "Ceinture de qualité marron cognac", price: 55000, category: "Accessoires", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Montre Digitale", description: "Montre multifonction sport", price: 150000, category: "Accessoires", provider: providers[6]._id, deliveryCategory: "store" },
+      { name: "Portefeuille en Cuir", description: "Portefeuille premium en cuir authentique", price: 75000, category: "Accessoires", provider: providers[6]._id, deliveryCategory: "store" },
+
+      // STORES - ÉLECTRONIQUE
+      { name: "Casque Bluetooth Wireless", description: "Casque audio haute qualité avec ANC", price: 280000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+      { name: "Chargeur Rapide 65W", description: "Chargeur universel compatible multi-appareils", price: 65000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+      { name: "Powerbank 20000mAh", description: "Batterie externe haute capacité", price: 95000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+      { name: "Câble USB Type-C (2m)", description: "Câble de charge et transfert données", price: 25000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+      { name: "Protecteur Écran Verre Trempé", description: "Verre trempé anti-rayures pour smartphone", price: 35000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+      { name: "Coque Protection Silicone", description: "Coque anti-choc pour téléphone", price: 28000, category: "Électronique", provider: providers[7]._id, deliveryCategory: "store" },
+
       // Encore quelques classiques pour arriver à 50
       { name: "Sandwich Tunisien complet", description: "Thon, œuf, salade, harissa, olives", price: 6500, category: "Sandwich", provider: providers[0]._id, deliveryCategory: "restaurant", optionGroups: [harissaGroup._id] },
       { name: "Salade Mechouia", description: "Poivrons et tomates grillés", price: 8000, category: "Entrée", provider: providers[1]._id, deliveryCategory: "restaurant" },
       { name: "Chorba frik", description: "Soupe traditionnelle au blé vert", price: 8000, category: "Soupe", provider: providers[1]._id, deliveryCategory: "restaurant" },
       { name: "Tajine el Bey", description: "Tajine au poulet, amandes, œufs", price: 18000, category: "Traditionnel", provider: providers[1]._id, deliveryCategory: "restaurant" },
       { name: "Banatage (pistaches de Nabeul) 250g", price: 18000, category: "Confiserie", provider: providers[5]._id, deliveryCategory: "course" },
-      { name: "Eau de fleur d’oranger 25cl", price: 8000, category: "Épicerie", provider: providers[5]._id, deliveryCategory: "course" },
-      // ... et on complète jusqu'à 50 (les 15 derniers sont des variantes réalistes)
-      ...Array.from({ length: 15 }, (_, i) => ({
-        name: `Produit tunisien #${i + 36}`,
-        description: "Spécialité régionale authentique",
-        price: 5000 + i * 1500,
-        stock: 100,
-        category: i % 2 === 0 ? "Traditionnel" : "Pâtisserie",
-        provider: providers[Math.floor(Math.random() * 3)]._id,
-        deliveryCategory: "restaurant",
-        image: "https://via.placeholder.com/300x300?text=Produit+Tunisien",
-      })),
-    ].slice(0, 50); // On force exactement 50
+      { name: "Eau de fleur d'oranger 25cl", price: 8000, category: "Épicerie", provider: providers[5]._id, deliveryCategory: "course" },
+    ];
 
     await Product.insertMany(produitsTunisiens.map(p => ({
       ...p,

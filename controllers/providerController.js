@@ -1,11 +1,13 @@
 const Provider = require('../models/Provider');
 const Product = require('../models/Product');
+const bcrypt = require('bcryptjs');
 
 // Labels pour l'affichage frontend
 const typeLabels = {
   restaurant: 'Restaurant',
   course: 'Supermarché',
-  pharmacy: 'Pharmacie'
+  pharmacy: 'Pharmacie',
+  store: 'Magasin'
 };
 
 
@@ -39,7 +41,7 @@ exports.updateProviderStatus = async (req, res) => {
     console.error('Error updating provider status:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du statut',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -57,7 +59,7 @@ exports.deleteProvider = async (req, res) => {
     console.error('Error deleting provider:', error);
     res.status(500).json({
       message: 'Erreur lors de la suppression du prestataire',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -138,7 +140,7 @@ exports.getProviders = async (req, res) => {
     console.error('Error fetching providers:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des prestataires',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -160,12 +162,12 @@ exports.getProviderById = async (req, res) => {
 // @desc Create new provider
 exports.createProvider = async (req, res) => {
   try {
-    // Ajouter profileImage à la destructuration
-    const { name, type, phone, address, email, description, image, profileImage, location } = req.body;
+    // Ajouter profileImage et password à la destructuration
+    const { name, type, phone, address, email, password, description, image, profileImage, location } = req.body;
 
-    if (!name || !phone || !address) {
+    if (!name || !phone || !address || !email || !password) {
       return res.status(400).json({
-        message: 'Nom, téléphone et adresse sont requis'
+        message: 'Nom, téléphone, adresse, email et mot de passe sont requis'
       });
     }
 
@@ -182,13 +184,17 @@ exports.createProvider = async (req, res) => {
       });
     }
 
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const provider = await Provider.create({
       name,
       type,
       phone,
       address,
       location,
-      ...(email && { email: email.toLowerCase() }),
+      email: email.toLowerCase(),
+      password: hashedPassword,
       ...(description && { description }),
       ...(image && { image }), // Couverture
       ...(profileImage && { profileImage }), // Profil
@@ -203,7 +209,7 @@ exports.createProvider = async (req, res) => {
     console.error('Error creating provider:', error);
     res.status(500).json({
       message: 'Erreur lors de la création du prestataire',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -215,8 +221,8 @@ exports.updateProvider = async (req, res) => {
       return res.status(400).json({ message: 'ID du prestataire invalide' });
     }
 
-    // Ajouter profileImage à la destructuration
-    const { name, type, phone, address, email, description, image, profileImage, location } = req.body;
+    // Ajouter profileImage et password à la destructuration
+    const { name, type, phone, address, email, password, description, image, profileImage, location } = req.body;
 
     if (!name || !phone || !address) {
       return res.status(400).json({
@@ -240,19 +246,28 @@ exports.updateProvider = async (req, res) => {
       });
     }
 
+    // Hash password if provided
+    let updateData = {
+      name,
+      type,
+      phone,
+      address,
+      location,
+      ...(email && { email: email.toLowerCase() }),
+      ...(description !== undefined && { description }),
+      ...(image && { image }), // Mise à jour couverture
+      ...(profileImage && { profileImage }), // Mise à jour profil
+    };
+
+    // Hash new password if provided
+    if (password) {
+      const bcrypt = require('bcrypt');
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
     const provider = await Provider.findByIdAndUpdate(
       req.params.id,
-      {
-        name,
-        type,
-        phone,
-        address,
-        location,
-        ...(email && { email: email.toLowerCase() }),
-        ...(description !== undefined && { description }),
-        ...(image && { image }), // Mise à jour couverture
-        ...(profileImage && { profileImage }), // Mise à jour profil
-      },
+      updateData,
       { new: true }
     );
 
@@ -268,7 +283,226 @@ exports.updateProvider = async (req, res) => {
     console.error('Error updating provider:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du prestataire',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
+  }
+};
+
+// @desc    Get provider earnings summary
+// @route   GET /api/provider/me/earnings
+// @access  Private (provider)
+exports.getProviderEarnings = async (req, res) => {
+  try {
+    const providerId = req.user._id || req.user.providerId;
+    if (!providerId) {
+      return res.status(400).json({ message: 'Fournisseur non associé' });
+    }
+
+    const Provider = require('../models/Provider');
+    const Order = require('../models/Order');
+
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    // Aggregate earnings from delivered orders
+    const deliveredOrders = await Order.find({
+      provider: providerId,
+      status: 'delivered'
+    });
+
+    const totalEarnings = deliveredOrders.reduce((sum, order) => sum + (order.restaurantPayout || 0), 0);
+    const averageEarnings = deliveredOrders.length > 0 ? totalEarnings / deliveredOrders.length : 0;
+
+    // Calculate daily balance info
+    let totalUnpaid = 0;
+    if (provider.dailyBalance && Array.isArray(provider.dailyBalance)) {
+      totalUnpaid = provider.dailyBalance
+        .filter(db => !db.paid)
+        .reduce((sum, db) => sum + (db.totalPayout || 0), 0);
+    }
+
+    res.json({
+      success: true,
+      earnings: {
+        totalEarnings: Number(totalEarnings.toFixed(3)),
+        averageEarnings: Number(averageEarnings.toFixed(3)),
+        deliveredOrders: deliveredOrders.length,
+        totalUnpaid: Number(totalUnpaid.toFixed(3)),
+        currency: 'DT'
+      }
+    });
+  } catch (error) {
+    console.error('Error in getProviderEarnings:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get provider daily balance history
+// @route   GET /api/provider/me/daily-balance
+// @access  Private (provider)
+exports.getProviderDailyBalance = async (req, res) => {
+  try {
+    const providerId = req.user._id || req.user.providerId;
+    if (!providerId) {
+      return res.status(400).json({ message: 'Fournisseur non associé' });
+    }
+
+    const Provider = require('../models/Provider');
+    const provider = await Provider.findById(providerId)
+      .populate({
+        path: 'dailyBalance.orders',
+        select: 'orderNumber restaurantPayout clientProductsPrice finalAmount createdAt deliveryDriver'
+      });
+
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    // Format daily balance data
+    const dailyBalanceFormatted = (provider.dailyBalance || [])
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .map(db => ({
+        id: db._id,
+        date: db.date,
+        orders: (db.orders || []).map(o => ({
+          id: o._id,
+          orderNumber: o.orderNumber,
+          payout: o.restaurantPayout || 0
+        })),
+        totalPayout: db.totalPayout || 0,
+        paymentMode: db.paymentMode || 'especes',
+        paid: db.paid,
+        paidAt: db.paidAt,
+        orderCount: (db.orders || []).length
+      }));
+
+    res.json({
+      success: true,
+      provider: {
+        id: provider._id,
+        name: provider.name,
+        type: provider.type
+      },
+      dailyBalance: dailyBalanceFormatted,
+      currency: 'DT'
+    });
+  } catch (error) {
+    console.error('Error in getProviderDailyBalance:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Confirm provider payout (cash-out)
+// @route   PUT /api/provider/me/pay-balance
+// @access  Private (provider)
+exports.payProviderBalance = async (req, res) => {
+  try {
+    const providerId = req.user._id || req.user.providerId;
+    const { balanceId, paymentMode } = req.body;
+
+    if (!providerId || !balanceId) {
+      return res.status(400).json({ message: 'Paramètres requis: providerId, balanceId' });
+    }
+
+    if (!['especes', 'facture', 'virement'].includes(paymentMode)) {
+      return res.status(400).json({ message: 'Mode de paiement invalide' });
+    }
+
+    const Provider = require('../models/Provider');
+    const provider = await Provider.findById(providerId);
+
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    // Find and update the balance entry
+    const balanceEntry = provider.dailyBalance?.find(db => db._id.toString() === balanceId);
+    if (!balanceEntry) {
+      return res.status(404).json({ message: 'Solde journalier non trouvé' });
+    }
+
+    balanceEntry.paid = true;
+    balanceEntry.paidAt = new Date();
+    balanceEntry.paymentMode = paymentMode;
+
+    await provider.save();
+
+    console.log(`💰 Provider ${providerId}: Balance paid - amount=${balanceEntry.totalPayout}, mode=${paymentMode}`);
+
+    res.json({
+      success: true,
+      message: 'Solde payé avec succès',
+      balance: {
+        id: balanceEntry._id,
+        amount: balanceEntry.totalPayout,
+        paymentMode: balanceEntry.paymentMode,
+        paidAt: balanceEntry.paidAt
+      }
+    });
+  } catch (error) {
+    console.error('Error in payProviderBalance:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get provider profile
+// @route   GET /api/provider/me/profile
+// @access  Private (provider)
+exports.getProviderProfile = async (req, res) => {
+  try {
+    const providerId = req.user._id || req.user.providerId;
+    if (!providerId) {
+      return res.status(400).json({ message: 'Fournisseur non associé' });
+    }
+
+    const Provider = require('../models/Provider');
+    const provider = await Provider.findById(providerId);
+
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    res.json({
+      success: true,
+      provider: {
+        id: provider._id,
+        name: provider.name,
+        type: provider.type,
+        phone: provider.phone,
+        address: provider.address,
+        email: provider.email,
+        description: provider.description,
+        location: provider.location,
+        image: provider.image,
+        profileImage: provider.profileImage,
+        status: provider.status,
+        createdAt: provider.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error in getProviderProfile:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Logout provider
+// @route   POST /api/provider/logout
+// @access  Private (provider)
+exports.logoutProvider = async (req, res) => {
+  try {
+    // La déconnexion est généralement gérée côté client en supprimant le token
+    // Mais on peut faire une validation ici si nécessaire
+    
+    console.log(`🚪 Provider ${req.user._id} logged out`);
+    
+    res.json({
+      success: true,
+      message: 'Déconnexion réussie'
+    });
+  } catch (error) {
+    console.error('Error in logoutProvider:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
   }
 };

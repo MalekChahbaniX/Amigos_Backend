@@ -310,7 +310,7 @@ exports.getAnalyticsOverview = async (req, res) => {
     console.error('Error fetching analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:  error.message ,
     });
   }
 };
@@ -406,7 +406,7 @@ exports.getRevenueAnalytics = async (req, res) => {
     console.error('Error fetching revenue analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses de revenus',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message ,
     });
   }
 };
@@ -496,7 +496,7 @@ exports.getUserAnalytics = async (req, res) => {
     console.error('Error fetching user analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses utilisateurs',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -607,7 +607,7 @@ exports.getProductAnalytics = async (req, res) => {
     console.error('Error fetching product analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses produits',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -769,7 +769,7 @@ exports.getBalanceAnalytics = async (req, res) => {
     console.error('Error fetching balance analytics:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des analyses de soldes',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };

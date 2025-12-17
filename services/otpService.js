@@ -59,21 +59,21 @@ class OTPService {
             console.log(`📱 Envoi OTP vers ${phoneNumber}...`);
 
             // En mode développement, simuler l'envoi et retourner le code
-            if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-                console.log('🔧 Mode développement: OTP simulé (code accessible via API)');
-                return {
-                    success: true,
-                    channels: ['sms'],
-                    responses: [{
-                        channel: 'sms',
-                        sid: `dev_${Date.now()}`,
-                        status: 'queued',
-                        debugMode: true,
-                        message: 'OTP simulé en mode développement'
-                    }],
-                    debugOtp: otp
-                };
-            }
+            // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+            //     console.log('🔧 Mode développement: OTP simulé (code accessible via API)');
+            //     return {
+            //         success: true,
+            //         channels: ['sms'],
+            //         responses: [{
+            //             channel: 'sms',
+            //             sid: `dev_${Date.now()}`,
+            //             status: 'queued',
+            //             debugMode: true,
+            //             message: 'OTP simulé en mode développement'
+            //         }],
+            //         debugOtp: otp
+            //     };
+            // }
 
             // Mode production: déterminer les canaux à utiliser
             const results = [];
@@ -188,23 +188,23 @@ class OTPService {
             }
 
             // En mode développement, retourner quand même un succès simulé
-            if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-                console.log('⚠️  Erreur Twilio, mais mode développement activé');
-                console.log('🔧 Retour d\'un OTP simulé malgré l\'erreur');
-                return {
-                    success: true,
-                    channels: ['sms'],
-                    responses: [{
-                        channel: 'sms',
-                        sid: `dev_error_${Date.now()}`,
-                        status: 'queued',
-                        debugMode: true,
-                        errorMessage: error.message,
-                        message: 'OTP simulé (erreur Twilio en mode dev)'
-                    }],
-                    debugOtp: otp
-                };
-            }
+            // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+            //     console.log('⚠️  Erreur Twilio, mais mode développement activé');
+            //     console.log('🔧 Retour d\'un OTP simulé malgré l\'erreur');
+            //     return {
+            //         success: true,
+            //         channels: ['sms'],
+            //         responses: [{
+            //             channel: 'sms',
+            //             sid: `dev_error_${Date.now()}`,
+            //             status: 'queued',
+            //             debugMode: true,
+            //             errorMessage: error.message,
+            //             message: 'OTP simulé (erreur Twilio en mode dev)'
+            //         }],
+            //         debugOtp: otp
+            //     };
+            // }
 
             // En production, si c'est une erreur d'authentification, retourner un succès simulé
             if (error.message.includes('Authenticate') || error.message.includes('Authentication')) {

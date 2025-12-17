@@ -63,7 +63,7 @@ exports.getClients = async (req, res) => {
     console.error('Error fetching clients:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des clients',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -100,7 +100,7 @@ exports.getClientById = async (req, res) => {
     console.error('Error fetching client:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du client',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -173,7 +173,7 @@ exports.createClient = async (req, res) => {
     console.error('Error creating client:', error);
     res.status(500).json({
       message: 'Erreur lors de la création du client',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -213,7 +213,7 @@ exports.updateClientStatus = async (req, res) => {
     console.error('Error updating client status:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du statut',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -240,7 +240,7 @@ exports.deleteClient = async (req, res) => {
     console.error('Error deleting client:', error);
     res.status(500).json({
       message: 'Erreur lors de la suppression du client',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
