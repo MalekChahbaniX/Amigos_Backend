@@ -9,19 +9,37 @@ const {
   getDelivererEarnings,
   getDelivererProfile,
   updateDelivererLocation,
-  logoutDeliverer
+  logoutDeliverer,
+  startSession,
+  stopSession,
+  getDelivererStatistics
 } = require('../controllers/delivererController');
-const { isDeliverer } = require('../middleware/auth');
+const { getDelivererSessions } = require('../controllers/delivererController');
+const { isDeliverer, checkDelivererSession } = require('../middleware/auth');
 
 // Routes pour les livreurs - nécessitent une authentification
-router.get('/orders', isDeliverer, getDelivererOrders);
-router.get('/orders/available', isDeliverer, getDelivererAvailableOrders);
-router.put('/orders/:orderId/accept', isDeliverer, acceptOrder);
-router.put('/orders/:orderId/reject', isDeliverer, rejectOrder);
-router.put('/orders/:orderId/status', isDeliverer, updateOrderStatus);
-router.get('/earnings', isDeliverer, getDelivererEarnings);
-router.get('/profile', isDeliverer, getDelivererProfile);
-router.put('/profile/location', isDeliverer, updateDelivererLocation);
+// Session start should be allowed without an active session
+router.post('/session/start', isDeliverer, startSession);
+
+// List past sessions for the authenticated deliverer
+router.get('/sessions', isDeliverer, getDelivererSessions);
+
+// All other deliverer routes require an active session
+router.get('/orders', isDeliverer, checkDelivererSession, getDelivererOrders);
+router.get('/orders/available', isDeliverer, checkDelivererSession, getDelivererAvailableOrders);
+router.put('/orders/:orderId/accept', isDeliverer, checkDelivererSession, acceptOrder);
+router.put('/orders/:orderId/reject', isDeliverer, checkDelivererSession, rejectOrder);
+router.put('/orders/:orderId/status', isDeliverer, checkDelivererSession, updateOrderStatus);
+router.get('/earnings', isDeliverer, checkDelivererSession, getDelivererEarnings);
+router.get('/statistics', isDeliverer, checkDelivererSession, getDelivererStatistics);
+router.get('/daily-balance', isDeliverer, checkDelivererSession, require('../controllers/delivererController').getDailyBalance);
+router.post('/pay-balance', isDeliverer, checkDelivererSession, require('../controllers/delivererController').payDailyBalance);
+router.get('/profile', isDeliverer, checkDelivererSession, getDelivererProfile);
+router.put('/profile/location', isDeliverer, checkDelivererSession, updateDelivererLocation);
+// Allow logout without requiring an active session (deliverer should be able to logout even if session expired)
 router.post('/logout', isDeliverer, logoutDeliverer);
+
+// End session
+router.post('/session/stop', isDeliverer, stopSession);
 
 module.exports = router;

@@ -2,12 +2,11 @@ const User = require('../models/User');
 const Zone = require('../models/Zone');
 const { calculateDistance } = require('../utils/distanceCalculator');
 
-// Helper function pour attribuer la zone basée sur la distance
 const assignZoneForUser = async (userId, latitude, longitude) => {
   try {
     // Point de référence (centre-ville Tunis ou votre point de départ)
-    const ORIGIN_LAT = 36.8065;
-    const ORIGIN_LON = 10.1815;
+    const ORIGIN_LAT = 33.805654;
+    const ORIGIN_LON = 10.990039;
 
     // Calculer la distance entre l'utilisateur et le point d'origine
     const distance = calculateDistance(ORIGIN_LAT, ORIGIN_LON, latitude, longitude);
@@ -82,7 +81,7 @@ exports.getProfile = async (req, res) => {
     console.error('Error fetching profile:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du profil',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -153,7 +152,7 @@ exports.updateProfile = async (req, res) => {
     console.error('Error updating profile:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du profil',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -188,10 +187,10 @@ exports.updateLocation = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       {
-        location: {
-          latitude,
-          longitude,
-          ...(address && { address })
+        $set: {
+          'location.latitude': latitude,
+          'location.longitude': longitude,
+          ...(address && { 'location.address': address })
         }
       },
       { new: true }
@@ -218,7 +217,7 @@ exports.updateLocation = async (req, res) => {
     console.error('Error updating location:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour de la localisation',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -274,7 +273,7 @@ exports.changePassword = async (req, res) => {
     console.error('Error changing password:', error);
     res.status(500).json({
       message: 'Erreur lors du changement de mot de passe',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -301,7 +300,7 @@ exports.getAppSettings = async (req, res) => {
     console.error('Error fetching app settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des paramètres',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -343,7 +342,7 @@ exports.updateAppSettings = async (req, res) => {
     console.error('Error updating app settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour des paramètres',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -367,7 +366,7 @@ exports.getNotificationSettings = async (req, res) => {
     console.error('Error fetching notification settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des paramètres de notification',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -403,7 +402,7 @@ exports.updateNotificationSettings = async (req, res) => {
     console.error('Error updating notification settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour des paramètres de notification',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -426,7 +425,7 @@ exports.getSecuritySettings = async (req, res) => {
     console.error('Error fetching security settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des paramètres de sécurité',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -460,7 +459,7 @@ exports.updateSecuritySettings = async (req, res) => {
     console.error('Error updating security settings:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour des paramètres de sécurité',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -510,7 +509,7 @@ exports.getUserAddresses = async (req, res) => {
     console.error('Error fetching addresses:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des adresses',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -543,7 +542,11 @@ exports.addAddress = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       {
-        location
+        $set: {
+          'location.latitude': location.latitude,
+          'location.longitude': location.longitude,
+          'location.address': location.address
+        }
       },
       { new: true }
     ).select('firstName lastName email phoneNumber role status location');
@@ -581,7 +584,7 @@ exports.addAddress = async (req, res) => {
     console.error('Error adding address:', error);
     res.status(500).json({
       message: 'Erreur lors de l\'ajout de l\'adresse',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -614,7 +617,11 @@ exports.updateAddress = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       {
-        location
+        $set: {
+          'location.latitude': location.latitude,
+          'location.longitude': location.longitude,
+          'location.address': location.address
+        }
       },
       { new: true }
     ).select('firstName lastName email phoneNumber role status location');
@@ -652,7 +659,7 @@ exports.updateAddress = async (req, res) => {
     console.error('Error updating address:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour de l\'adresse',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message ,
     });
   }
 };
@@ -672,10 +679,10 @@ exports.deleteAddress = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       {
-        location: {
-          latitude: 36.8065,
-          longitude: 10.1815,
-          address: 'Tunis, Tunisia'
+        $set: {
+          'location.latitude': 36.8065,
+          'location.longitude': 10.1815,
+          'location.address': 'Tunis, Tunisia'
         }
       },
       { new: true }
@@ -692,7 +699,7 @@ exports.deleteAddress = async (req, res) => {
     console.error('Error deleting address:', error);
     res.status(500).json({
       message: 'Erreur lors de la suppression de l\'adresse',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message,
     });
   }
 };

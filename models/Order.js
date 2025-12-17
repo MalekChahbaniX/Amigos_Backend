@@ -77,8 +77,14 @@ const orderSchema = new mongoose.Schema({
   // AUTRES CHAMPS
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'in_delivery', 'delivered', 'cancelled'],
+    enum: ['pending', 'accepted', 'collected', 'in_delivery', 'delivered', 'cancelled'],
     default: 'pending',
+  },
+  // PROVIDER PAYMENT: Payment method(s) for grouped orders
+  // Can be string for single order or array for grouped orders
+  providerPaymentMode: {
+    type: mongoose.Schema.Types.Mixed, // Can be 'especes' | 'facture' (string) or array of {provider, mode}
+    default: 'especes'
   },
   deliveryAddress: {
     street: String,
@@ -118,10 +124,69 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     required: true, // P2_total + deliveryFee + appFee
   },
+  // Order type categorization (A1..A4)
+  // Assigned dynamically when transitioning to 'in_delivery' based on grouping and urgency
+  orderType: {
+    type: String,
+    enum: ['A1', 'A2', 'A3', 'A4'],
+    default: null
+  },
+  // Mark urgent orders (A4) so they can be prioritized and never grouped
+  isUrgent: {
+    type: Boolean,
+    default: false
+  },
+  // Solde breakdowns for different calculations/reporting
+  soldeSimple: {
+    type: Number,
+    default: 0
+  },
+  soldeDual: {
+    type: Number,
+    default: 0
+  },
+  soldeTriple: {
+    type: Number,
+    default: 0
+  },
+  soldeAmigos: {
+    type: Number,
+    default: 0
+  },
+  // Grouping support: list of grouped order IDs and a flag
+  groupedOrders: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Order'
+    }
+  ],
+  isGrouped: {
+    type: Boolean,
+    default: false
+  },
+  // Processing and scheduling to allow small delay batching (e.g., 5-10 minutes)
+  processingDelay: {
+    type: Number, // delay in minutes
+    default: 0
+  },
+  scheduledFor: {
+    type: Date,
+    default: null
+  },
   // PROMO
   appliedPromo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Promo',
+  },
+  assignedAt: {
+    type: Date,
+    default: null,
+  },
+  // PROTECTION WINDOW: Orders are protected from being picked up for 3 minutes after creation
+  // protectionEnd = createdAt + 3 minutes (180000ms)
+  protectionEnd: {
+    type: Date,
+    default: null,
   },
   createdAt: {
     type: Date,
@@ -130,4 +195,24 @@ const orderSchema = new mongoose.Schema({
 });
 
 const Order = mongoose.model('Order', orderSchema);
+// Indexes to support grouping, scheduling, and protection window queries
+// Primary index for grouping candidates by business filters:
+// e.g. { status: 'pending', orderType: { $in: [...] }, isGrouped: false, scheduledFor: { $lte: <date> } }
+orderSchema.index({ status: 1, orderType: 1, isGrouped: 1, scheduledFor: 1 });
+
+// Keep provider+zone+scheduledFor index for provider/zone based grouping/batching
+orderSchema.index({ provider: 1, zone: 1, scheduledFor: 1 });
+
+// PROTECTION WINDOW INDEXES:
+// Efficient filtering for available orders: status=pending, protectionEnd <= now, not urgent
+// Used in getDelivererAvailableOrders to exclude protected orders
+orderSchema.index({ status: 1, protectionEnd: 1 });
+
+// Urgent orders bypass protection, so prioritize urgent+protection for sorting
+orderSchema.index({ isUrgent: 1, protectionEnd: 1 });
+
+// Removed less selective/redundant indexes to avoid index bloat:
+// - { isGrouped, scheduledFor } and { provider, scheduledFor } removed because
+//   the composite indexes above cover common queries and are more selective.
+
 module.exports = Order;

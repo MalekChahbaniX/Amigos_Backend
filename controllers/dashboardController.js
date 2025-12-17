@@ -74,7 +74,7 @@ exports.getDashboardStats = async (req, res) => {
     console.error('Error fetching dashboard stats:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des statistiques',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -140,7 +140,7 @@ exports.getPlatformBalance = async (req, res) => {
     console.error('Error fetching platform balance:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du solde plateforme',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -244,7 +244,7 @@ exports.getDelivererBalance = async (req, res) => {
     console.error('Error fetching deliverer balance:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération du solde livreurs',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -331,7 +331,7 @@ exports.getDelivererOrders = async (req, res) => {
     console.error('Error fetching deliverer orders:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des commandes du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -365,7 +365,7 @@ exports.getRecentOrders = async (req, res) => {
     console.error('Error fetching recent orders:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des commandes récentes',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -435,7 +435,7 @@ exports.getAllOrders = async (req, res) => {
     console.error('Error fetching orders:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des commandes',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -499,7 +499,7 @@ exports.updateOrderStatus = async (req, res) => {
     console.error('Error updating order status:', error);
     res.status(500).json({
       message: 'Erreur lors de la mise à jour du statut',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -562,7 +562,7 @@ exports.assignDeliverer = async (req, res) => {
     console.error('Error assigning deliverer:', error);
     res.status(500).json({
       message: 'Erreur lors de l\'assignation du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -591,7 +591,7 @@ exports.getActiveDeliverers = async (req, res) => {
     console.error('Error fetching active deliverers:', error);
     res.status(500).json({
       message: 'Erreur lors de la récupération des livreurs actifs',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };

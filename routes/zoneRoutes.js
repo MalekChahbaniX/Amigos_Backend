@@ -10,18 +10,19 @@ const {
   updateZonePrice,
   updateCityZones
 } = require('../controllers/zoneController');
+const { protect, isAdminOrSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 
 // Zone utility routes
 router.post('/get-zone', getUserZone);
-router.put('/update-price', updateZonePrice);
-router.put('/update-city-zones', updateCityZones);
+router.put('/update-price', protect, isAdminOrSuperAdmin, updateZonePrice);
+router.put('/update-city-zones/:id', protect, isAdminOrSuperAdmin, updateCityZones);
 
 // Zone CRUD routes
 router.get('/', getZones);
 router.get('/:id', getZoneById);
-router.post('/', createZone);
-router.put('/:id', updateZone);
-router.delete('/:id', deleteZone);
+router.post('/', protect, isSuperAdmin, createZone);
+router.put('/:id', protect, isSuperAdmin, updateZone);
+router.delete('/:id', protect, isSuperAdmin, deleteZone);
 
 
 

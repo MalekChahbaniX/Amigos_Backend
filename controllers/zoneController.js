@@ -267,6 +267,16 @@ const getUserZone = async (req, res) => {
 const updateZonePrice = async (req, res) => {
   try {
     const { zoneNumber, newPrice } = req.body;
+
+    // If requester is admin, ensure the zone belongs to their city
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      const city = await City.findById(req.user.city);
+      if (!city) return res.status(404).json({ message: 'Ville de l\'admin non trouvée' });
+      if (!city.activeZones.includes(zoneNumber)) {
+        return res.status(403).json({ message: 'Accès refusé: zone hors de votre ville' });
+      }
+    }
     const zone = await Zone.findOneAndUpdate(
       { number: zoneNumber },
       { price: newPrice },
@@ -302,6 +312,14 @@ const updateCityZones = async (req, res) => {
       return res.status(400).json({ 
         message: "activeZones doit être un tableau" 
       });
+    }
+
+    // If requester is an admin, ensure they can only update their own city
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      if (req.user.city.toString() !== id.toString()) {
+        return res.status(403).json({ message: 'Accès refusé: vous ne pouvez modifier que votre ville' });
+      }
     }
 
     const city = await City.findByIdAndUpdate(

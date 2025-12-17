@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const OTP = require('../models/OTP');
+const City = require('../models/City');
+const Session = require('../models/Session');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const OTPService = require('../services/otpService');
@@ -66,7 +68,12 @@ exports.loginUser = async (req, res) => {
           phoneNumber,
           firstName: '', // Sera rempli plus tard lors de la création du profil
           isVerified: false,
-          status: 'pending'
+          status: 'pending',
+          location: {
+            latitude: 36.8065, // Tunis par défaut
+            longitude: 10.1815,
+            address: 'Tunis, Tunisia'
+          }
         });
         console.log('Nouvel utilisateur créé avec ID:', user._id);
       } catch (createError) {
@@ -181,19 +188,19 @@ exports.loginUser = async (req, res) => {
           }
           
           // En développement, inclure le code pour tester facilement
-          if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-            response.debugOtp = otp;
-            response.devMessage = `Code pour tester: ${otp}`;
-          }
+          // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+          //   response.debugOtp = otp;
+          //   response.devMessage = `Code pour tester: ${otp}`;
+          // }
         } else {
           response.message = message;
           response.error = errorMessage;
           
           // En cas d'échec total, retourner le code en mode développement
-          if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-            response.debugOtp = otp;
-            response.message += ` - Code de debug: ${otp}`;
-          }
+          // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+          //   response.debugOtp = otp;
+          //   response.message += ` - Code de debug: ${otp}`;
+          // }
         }
 
         return res.status(200).json(response);
@@ -209,7 +216,7 @@ exports.loginUser = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({ 
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -278,7 +285,7 @@ exports.verifyOTP = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({ 
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -307,7 +314,7 @@ exports.logoutUser = async (req, res) => {
     console.error('Erreur lors de la déconnexion:', error);
     res.status(500).json({
       message: 'Erreur serveur lors de la déconnexion',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -355,7 +362,7 @@ exports.registerUser = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -383,6 +390,10 @@ exports.registerSuperAdmin = async (req, res) => {
       return res.status(400).json({ message: 'Format d\'email invalide' });
     }
 
+   // Normaliser l'email en lowercase
+   const normalizedEmail = email.toLowerCase();
+
+
     // Validation de la longueur du mot de passe
     if (password.length < 6) {
       return res.status(400).json({
@@ -399,7 +410,7 @@ exports.registerSuperAdmin = async (req, res) => {
     // }
 
     // Vérifier si l'email existe déjà
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: 'Un compte existe déjà avec cet email' });
     }
@@ -411,7 +422,7 @@ exports.registerSuperAdmin = async (req, res) => {
 
     // Créer le super administrateur
     const superAdmin = await User.create({
-      email,
+      email: normalizedEmail,
       password: hashedPassword,
       firstName: firstName || '',
       lastName: lastName || '',
@@ -441,7 +452,7 @@ exports.registerSuperAdmin = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur lors de la création du super administrateur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -520,7 +531,7 @@ exports.loginSuperAdmin = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur lors de la connexion du super administrateur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -583,7 +594,7 @@ exports.registerDeliverer = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur lors de la création du livreur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -594,12 +605,25 @@ exports.registerDeliverer = async (req, res) => {
 exports.loginDeliverer = async (req, res) => {
   const { phoneNumber } = req.body;
 
+  // Normaliser le numéro fourni : si l'utilisateur envoie 8 chiffres, ajouter le préfixe +216
+  const rawPhone = phoneNumber;
+  let normalizedPhone = phoneNumber;
+  try {
+    if (phoneNumber && /^\d{8}$/.test(phoneNumber)) {
+      normalizedPhone = `+216${phoneNumber}`;
+      console.log('Numéro normalisé vers:', normalizedPhone);
+    }
+  } catch (e) {
+    // ignore
+  }
+
   try {
     console.log('=== DEBUT LOGIN DELIVERER ===');
     console.log('Tentative de connexion livreur pour:', phoneNumber);
 
     // Vérifier si le livreur existe
-    let deliverer = await User.findOne({ phoneNumber, role: 'deliverer' });
+    // Chercher le livreur soit par le numéro tel quel, soit par la version normalisée
+    let deliverer = await User.findOne({ role: 'deliverer', $or: [{ phoneNumber: rawPhone }, { phoneNumber: normalizedPhone }] });
     console.log('Livreur trouvé:', deliverer ? 'Oui' : 'Non');
 
     if (!deliverer) {
@@ -607,7 +631,7 @@ exports.loginDeliverer = async (req, res) => {
       console.log('Création d\'un nouveau livreur pour:', phoneNumber);
       try {
         deliverer = await User.create({
-          phoneNumber,
+          phoneNumber: normalizedPhone,
           firstName: '', // Sera rempli plus tard
           lastName: '',
           role: 'deliverer',
@@ -627,11 +651,68 @@ exports.loginDeliverer = async (req, res) => {
     // Mettre à jour le statut du livreur s'il est inactif
     if (deliverer.status !== 'active') {
       deliverer.status = 'active';
-      await deliverer.save();
+      await deliverer.save({ validateBeforeSave: false });
       console.log('Statut du livreur mis à jour vers actif');
     }
 
-    // Le livreur est automatiquement vérifié et connecté directement
+    // After activation, ensure there's a daily session: reuse if exists for today, otherwise create
+    try {
+      const today = new Date();
+      const startOfToday = new Date(today);
+      startOfToday.setHours(0,0,0,0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+      let session = null;
+
+      // If user has currentSession, try to load and validate it
+      if (deliverer.currentSession) {
+        session = await Session.findById(deliverer.currentSession);
+        if (session && session.active) {
+          const s = new Date(session.startTime);
+          if (!(s >= startOfToday && s < startOfTomorrow)) {
+            // session exists but not for today -> ignore
+            session = null;
+          }
+        } else {
+          session = null;
+        }
+      }
+
+      // If no valid currentSession, look up an active session for today
+      if (!session) {
+        session = await Session.findOne({
+          deliverer: deliverer._id,
+          active: true,
+          startTime: { $gte: startOfToday, $lt: startOfTomorrow }
+        });
+      }
+
+      // If still none, create one for today
+      if (!session) {
+        session = await Session.create({ deliverer: deliverer._id });
+        // attach to user
+        deliverer.currentSession = session._id;
+        deliverer.sessionDate = startOfToday;
+        deliverer.sessionActive = true;
+        await deliverer.save({ validateBeforeSave: false });
+        console.log('Nouvelle session journalière créée pour le livreur:', deliverer._id);
+      } else {
+        // Ensure user fields are in sync
+        deliverer.currentSession = session._id;
+        const sDate = new Date(session.startTime);
+        sDate.setHours(0,0,0,0);
+        deliverer.sessionDate = sDate;
+        deliverer.sessionActive = !!session.active;
+        await deliverer.save({ validateBeforeSave: false });
+        console.log('Session journalière réutilisée pour le livreur:', deliverer._id);
+      }
+    } catch (sessErr) {
+      console.error('Erreur lors de la gestion de la session journalière au login:', sessErr);
+      // don't block login on session creation failure
+    }
+
+    // Return deliverer info including session metadata so middleware can rely on it immediately
     console.log('Connexion livreur réussie');
     return res.status(200).json({
       _id: deliverer._id,
@@ -643,6 +724,9 @@ exports.loginDeliverer = async (req, res) => {
       role: deliverer.role,
       isVerified: true,
       status: 'active',
+      sessionDate: deliverer.sessionDate,
+      sessionActive: deliverer.sessionActive,
+      currentSession: deliverer.currentSession,
       token: generateToken(deliverer._id),
       message: 'Connexion livreur réussie'
     });
@@ -652,7 +736,7 @@ exports.loginDeliverer = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
     });
   }
 };
@@ -710,7 +794,344 @@ exports.verifyDelivererOTP = async (req, res) => {
     console.error('Erreur complète:', error);
     res.status(500).json({
       message: 'Erreur serveur',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error:   error.message
+    });
+  }
+};
+
+// @desc    Enregistrer un nouvel administrateur
+// @route   POST /api/auth/register-admin
+// @access  Public (mais devrait être sécurisé en production)
+exports.registerAdmin = async (req, res) => {
+  const { email, password, firstName, lastName, cityId } = req.body;
+
+  try {
+    console.log('=== DEBUT REGISTER ADMIN ===');
+    console.log('Création admin pour:', email);
+
+    // Validation des paramètres requis
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email et mot de passe sont requis pour l\'admin'
+      });
+    }
+
+    // Validation du format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Format d\'email invalide' });
+    }
+
+    // Normaliser l'email en lowercase
+    const normalizedEmail = email.toLowerCase();
+
+    // Vérifier la présence et l'existence de la ville pour un admin
+    if (!cityId) {
+      return res.status(400).json({ message: 'cityId est requis pour un administrateur' });
+    }
+
+    const city = await City.findById(cityId);
+    if (!city) {
+      return res.status(404).json({ message: 'Ville non trouvée pour cityId fourni' });
+    }
+
+    // Validation de la longueur du mot de passe
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
+    // Vérifier si l'email existe déjà
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Un compte existe déjà avec cet email' });
+    }
+
+    // Hasher le mot de passe
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    console.log('Mot de passe hashé avec succès');
+
+    // Créer l'administrateur
+    const admin = await User.create({
+      email: normalizedEmail,
+      password: hashedPassword,
+      firstName: firstName || '',
+      lastName: lastName || '',
+      role: 'admin',
+      city: city._id,
+      isVerified: true, // L'admin est automatiquement vérifié
+      status: 'active'
+    });
+
+    console.log('Administrateur créé:', admin._id);
+
+    if (admin) {
+      res.status(201).json({
+        _id: admin._id,
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        email: admin.email,
+        role: admin.role,
+        isVerified: admin.isVerified,
+        token: generateToken(admin._id),
+        message: 'Administrateur créé avec succès'
+      });
+    } else {
+      res.status(400).json({ message: 'Données administrateur invalides' });
+    }
+  } catch (error) {
+    console.error('=== ERREUR REGISTER ADMIN ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la création de l\'administrateur',
+      error:   error.message
+    });
+  }
+};
+
+// @desc    Connecter un administrateur
+// @route   POST /api/auth/login-admin
+// @access  Public
+exports.loginAdmin = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    console.log('=== DEBUT LOGIN ADMIN ===');
+    console.log('Tentative de connexion admin pour:', email);
+
+    // Validation des paramètres
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email et mot de passe sont requis'
+      });
+    }
+
+    // Validation du format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Format d\'email invalide' });
+    }
+
+    // Rechercher l'utilisateur admin par email
+    const admin = await User.findOne({
+      email: email.toLowerCase(),
+      role: 'admin'
+    });
+
+    if (!admin) {
+      console.log('Admin non trouvé pour:', email);
+      return res.status(401).json({
+        message: 'Identifiants invalides pour l\'administrateur'
+      });
+    }
+
+    console.log('Admin trouvé:', admin._id);
+
+    // Vérifier le mot de passe
+    const isPasswordValid = await bcrypt.compare(password, admin.password);
+
+    if (!isPasswordValid) {
+      console.log('Mot de passe invalide pour:', email);
+      return res.status(401).json({
+        message: 'Identifiants invalides pour l\'administrateur'
+      });
+    }
+
+    // Vérifier le statut du compte
+    if (admin.status !== 'active') {
+      console.log('Compte admin inactif:', admin.status);
+      return res.status(401).json({
+        message: 'Compte administrateur désactivé'
+      });
+    }
+
+    console.log('Connexion admin réussie pour:', email);
+
+    res.status(200).json({
+      _id: admin._id,
+      firstName: admin.firstName,
+      lastName: admin.lastName,
+      email: admin.email,
+      role: admin.role,
+      isVerified: admin.isVerified,
+      token: generateToken(admin._id),
+      message: 'Connexion administrateur réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR LOGIN ADMIN ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la connexion de l\'administrateur',
+      error:   error.message
+    });
+  }
+};
+
+// @desc    Enregistrer un nouveau prestataire (provider)
+// @route   POST /api/auth/register-provider
+// @access  Public
+exports.registerProvider = async (req, res) => {
+  const { email, password, firstName, lastName, providerId } = req.body;
+  const Provider = require('../models/Provider');
+
+  try {
+    console.log('=== DEBUT REGISTER PROVIDER ===');
+    console.log('Création prestataire pour:', email, providerId);
+
+    // Validation des paramètres requis
+    if (!email || !password || !providerId) {
+      return res.status(400).json({
+        message: 'Email, mot de passe et providerId sont requis pour le prestataire'
+      });
+    }
+
+    // Validation du format email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: 'Format d\'email invalide' });
+    }
+
+    // Normaliser l'email en lowercase
+    const normalizedEmail = email.toLowerCase();
+
+    // Validation de la longueur du mot de passe
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: 'Le mot de passe doit contenir au moins 6 caractères'
+      });
+    }
+
+    // Vérifier si un utilisateur existe déjà avec cet email
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Un compte existe déjà avec cet email' });
+    }
+
+    // Vérifier si le provider existe et n'a pas déjà un utilisateur
+    const provider = await Provider.findById(providerId);
+    if (!provider) {
+      return res.status(404).json({ message: 'Prestataire non trouvé' });
+    }
+
+    // Vérifier si ce provider a déjà un utilisateur associé
+    const existingProvider = await User.findOne({ role: 'provider', providerId });
+    if (existingProvider) {
+      return res.status(400).json({ message: 'Un compte utilisateur existe déjà pour ce prestataire' });
+    }
+
+    // Hacher le mot de passe
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Créer le prestataire
+    const providerUser = await User.create({
+      email: normalizedEmail,
+      password: hashedPassword,
+      firstName: firstName || provider.name || '',
+      lastName: lastName || '',
+      role: 'provider',
+      providerId: providerId,
+      isVerified: true, // Le prestataire est automatiquement vérifié
+      status: 'active'
+    });
+
+    console.log('Prestataire créé:', providerUser._id);
+
+    if (providerUser) {
+      res.status(201).json({
+        _id: providerUser._id,
+        firstName: providerUser.firstName,
+        lastName: providerUser.lastName,
+        email: providerUser.email,
+        role: providerUser.role,
+        providerId: providerUser.providerId,
+        isVerified: providerUser.isVerified,
+        status: providerUser.status,
+        token: generateToken(providerUser._id),
+        message: 'Compte prestataire créé avec succès'
+      });
+    } else {
+      res.status(400).json({ message: 'Données prestataire invalides' });
+    }
+  } catch (error) {
+    console.error('=== ERREUR REGISTER PROVIDER ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la création du prestataire',
+      error:   error.message
+    });
+  }
+};
+
+// @desc    Connecter un prestataire (provider)
+// @route   POST /api/auth/login-provider
+// @access  Public
+exports.loginProvider = async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    console.log('=== DEBUT LOGIN PROVIDER ===');
+    console.log('Tentative de connexion prestataire pour:', email);
+
+    // Validation des paramètres requis
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email et mot de passe sont requis'
+      });
+    }
+
+    // Normaliser l'email en lowercase
+    const normalizedEmail = email.toLowerCase();
+
+    // Chercher le prestataire par email dans la collection Provider
+    const Provider = require('../models/Provider');
+    let provider = await Provider.findOne({ email: normalizedEmail });
+
+    if (!provider) {
+      console.log('Prestataire non trouvé pour:', normalizedEmail);
+      return res.status(401).json({ 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    // Vérifier le mot de passe
+    const isPasswordValid = await bcrypt.compare(password, provider.password);
+    
+    if (!isPasswordValid) {
+      console.log('Mot de passe incorrect pour:', normalizedEmail);
+      return res.status(401).json({ 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    console.log('Connexion prestataire réussie pour:', normalizedEmail);
+
+    // Générer le token JWT avec providerId
+    const token = generateToken(provider._id);
+
+    res.status(200).json({
+      _id: provider._id,
+      name: provider.name,
+      email: provider.email,
+      type: provider.type,
+      phone: provider.phone,
+      address: provider.address,
+      role: 'provider',
+      isVerified: true,
+      status: provider.status,
+      token: token,
+      message: 'Connexion prestataire réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR LOGIN PROVIDER ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la connexion du prestataire',
+      error:   error.message
     });
   }
 };
