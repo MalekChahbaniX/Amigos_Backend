@@ -131,20 +131,6 @@ router.post('/provider', uploadProvider.single('image'), (req, res) => {
   }
 });
 
-    res.json({
-      success: true,
-      imageUrl: imageUrl,
-      message: 'Image uploadée avec succès'
-    });
-  } catch (error) {
-    console.error('Erreur lors de l\'upload:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de l\'upload de l\'image'
-    });
-  }
-});
-
 // Middleware de gestion d'erreurs pour multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
