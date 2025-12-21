@@ -62,8 +62,13 @@ router.post('/product', upload.single('image'), (req, res) => {
       return res.status(400).json({ message: 'Aucun fichier fourni' });
     }
 
-    // Construire l'URL de l'image
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    // Construire l'URL de l'image avec détection HTTPS correcte
+    // req.secure détecte si la connexion est HTTPS directe
+    // x-forwarded-proto peut être 'https' ou 'https, http' (comma-separated)
+    const xForwardedProto = req.headers['x-forwarded-proto'];
+    const isHttps = req.secure || (xForwardedProto && xForwardedProto.includes('https'));
+    const protocol = isHttps ? 'https' : 'http';
+    const baseUrl = `${protocol}://${req.get('host')}`;
     const imageUrl = `${baseUrl}/uploads/product/${req.file.filename}`;
 
     res.json({
@@ -87,8 +92,13 @@ router.post('/provider', uploadProvider.single('image'), (req, res) => {
       return res.status(400).json({ message: 'Aucun fichier fourni' });
     }
 
-    // Construire l'URL de l'image
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    // Construire l'URL de l'image avec détection HTTPS correcte
+    // req.secure détecte si la connexion est HTTPS directe
+    // x-forwarded-proto peut être 'https' ou 'https, http' (comma-separated)
+    const xForwardedProto = req.headers['x-forwarded-proto'];
+    const isHttps = req.secure || (xForwardedProto && xForwardedProto.includes('https'));
+    const protocol = isHttps ? 'https' : 'http';
+    const baseUrl = `${protocol}://${req.get('host')}`;
     const imageUrl = `${baseUrl}/uploads/provider/${req.file.filename}`;
 
     res.json({

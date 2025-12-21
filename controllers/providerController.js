@@ -261,7 +261,6 @@ exports.updateProvider = async (req, res) => {
 
     // Hash new password if provided
     if (password) {
-      const bcrypt = require('bcrypt');
       updateData.password = await bcrypt.hash(password, 10);
     }
 

@@ -7,6 +7,135 @@ const Product = require('../models/Product');
 const { calculateDistance } = require('../utils/distanceCalculator');
 // notifyNewOrder is now available globally from server.js
 
+// @desc    Calculate order fees (delivery + app fee) before confirming
+// @route   POST /api/orders/calculate-fees
+// @access  Private (client)
+exports.calculateOrderFees = async (req, res) => {
+  const {
+    provider: providerId,
+    items,
+    deliveryAddress, // { latitude, longitude }
+    zoneId
+  } = req.body;
+
+  try {
+    console.log('💰 Calculating order fees...');
+    
+    // 1. Fetch provider
+    const providerData = await Provider.findById(providerId);
+    if (!providerData) {
+      return res.status(404).json({ message: 'Provider not found' });
+    }
+
+    // 2. Calculate delivery fee based on zone/distance
+    let calculatedDeliveryFee = 0;
+    let calculatedDistance = 0;
+    let matchedZoneId = null;
+
+    if (
+      providerData.location && 
+      providerData.location.latitude && 
+      providerData.location.longitude &&
+      deliveryAddress && 
+      deliveryAddress.latitude && 
+      deliveryAddress.longitude
+    ) {
+      calculatedDistance = calculateDistance(
+        providerData.location.latitude,
+        providerData.location.longitude,
+        deliveryAddress.latitude,
+        deliveryAddress.longitude
+      );
+
+      const zone = await Zone.findOne({
+        minDistance: { $lte: calculatedDistance },
+        maxDistance: { $gt: calculatedDistance }
+      });
+
+      if (zone) {
+        calculatedDeliveryFee = zone.price;
+        matchedZoneId = zone._id;
+        console.log(`📍 Zone matched: ${zone.number}, fee: ${zone.price} TND`);
+      } else {
+        console.log('⚠️ No zone matched for distance:', calculatedDistance);
+      }
+    }
+
+    // 3. Calculate product categories to determine app fee
+    let hasRestaurant = false;
+    let hasCourse = false;
+    let hasPharmacy = false;
+    let p2Total = 0;
+
+    const productIds = items.map(item => item.productId || item.product).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } });
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
+
+    for (const item of items) {
+      const product = productMap.get((item.productId || item.product || '').toString());
+      let p2;
+      let deliveryCategory;
+
+      if (product) {
+        p2 = product.p2;
+        deliveryCategory = product.deliveryCategory;
+      } else {
+        p2 = item.price || 0;
+        deliveryCategory = providerData.type;
+      }
+
+      if (deliveryCategory === 'restaurant') hasRestaurant = true;
+      if (deliveryCategory === 'course') hasCourse = true;
+      if (deliveryCategory === 'pharmacy') hasPharmacy = true;
+      if (deliveryCategory === 'store') hasPharmacy = true;
+
+      p2Total += p2 * (item.quantity || 1);
+    }
+
+    // 4. Determine delivery category and get app fee
+    let deliveryCategory = 'restaurant';
+    if (hasCourse) deliveryCategory = 'course';
+    else if (hasPharmacy) deliveryCategory = 'pharmacy';
+
+    console.log(`🏷️ Delivery category determined: ${deliveryCategory}`);
+
+    // Get app fee from database
+    const appSetting = await AppSetting.findOne();
+    console.log('📊 AppSetting from DB:', appSetting);
+
+    let appFee = 0;
+    if (appSetting && appSetting.appFee !== undefined) {
+      appFee = appSetting.appFee;
+      console.log(`✅ Using appFee from DB: ${appFee} TND`);
+    } else {
+      // Fallback to defaults if no setting exists
+      appFee = (deliveryCategory === 'restaurant' ? 0 : 1.5);
+      console.log(`⚠️ No AppSetting in DB, using default: ${appFee} TND for category ${deliveryCategory}`);
+    }
+
+    // 5. Return fees
+    res.status(200).json({
+      success: true,
+      deliveryFee: calculatedDeliveryFee,
+      appFee: appFee,
+      distance: calculatedDistance,
+      zoneId: matchedZoneId,
+      deliveryCategory: deliveryCategory,
+      p2Total: p2Total,
+      totalFees: calculatedDeliveryFee + appFee,
+      total: p2Total + calculatedDeliveryFee + appFee
+    });
+
+  } catch (error) {
+    console.error('Error calculating fees:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error calculating order fees',
+      error: error.message
+    });
+  }
+};
+
 // @desc    Create a new order with complete pricing logic
 // @route   POST /api/orders
 // @access  Private (client)
@@ -155,9 +284,19 @@ exports.createOrder = async (req, res) => {
     const finalDeliveryFee = calculatedDeliveryFee;
 
     // 6. Charger les frais application
-    console.log('💳 Loading app fees...');
+    console.log('💳 Loading app fees from database...');
     const appSetting = await AppSetting.findOne();
-    const appFee = appSetting ? appSetting.appFee : (deliveryCategory === 'restaurant' ? 0 : 1.5);
+    console.log('📊 AppSetting from DB:', appSetting);
+    
+    let appFee = 0;
+    if (appSetting && appSetting.appFee !== undefined) {
+      appFee = appSetting.appFee;
+      console.log(`✅ Using appFee from DB: ${appFee} TND`);
+    } else {
+      // Fallback to defaults if no setting exists
+      appFee = (deliveryCategory === 'restaurant' ? 0 : 1.5);
+      console.log(`⚠️ No AppSetting in DB, using default: ${appFee} TND for category ${deliveryCategory}`);
+    }
 
     // 7. Calculer le montant final
     const finalAmount = p2Total + finalDeliveryFee + appFee;
