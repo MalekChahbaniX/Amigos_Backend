@@ -4,7 +4,6 @@ const appSettingSchema = new mongoose.Schema({
   appFee: {
     type: Number,
     required: true,
-    default: 1.5, // frais par défaut
   },
   currency: {
     type: String,

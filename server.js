@@ -47,6 +47,9 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// Trust proxy headers (for HTTPS behind reverse proxy)
+app.set('trust proxy', 1);
+
 // Additional headers for CORS preflight
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   createOrder,
+  calculateOrderFees,
   getOrdersByClient,
   getOrdersBySuperAdmin,
   getAvailableOrders,
@@ -11,6 +12,7 @@ const {
 } = require('../controllers/orderController');
 
 // Routes pour les clients et les livreurs
+router.post('/calculate-fees', calculateOrderFees);
 router.post('/', createOrder);
 router.get('/user/:id', getOrdersByClient);
 router.get('/superadmin/:id', getOrdersBySuperAdmin);

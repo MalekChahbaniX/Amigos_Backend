@@ -195,24 +195,11 @@ const orderSchema = new mongoose.Schema({
 });
 
 const Order = mongoose.model('Order', orderSchema);
-// Indexes to support grouping, scheduling, and protection window queries
-// Primary index for grouping candidates by business filters:
-// e.g. { status: 'pending', orderType: { $in: [...] }, isGrouped: false, scheduledFor: { $lte: <date> } }
 orderSchema.index({ status: 1, orderType: 1, isGrouped: 1, scheduledFor: 1 });
-
 // Keep provider+zone+scheduledFor index for provider/zone based grouping/batching
 orderSchema.index({ provider: 1, zone: 1, scheduledFor: 1 });
-
-// PROTECTION WINDOW INDEXES:
-// Efficient filtering for available orders: status=pending, protectionEnd <= now, not urgent
-// Used in getDelivererAvailableOrders to exclude protected orders
 orderSchema.index({ status: 1, protectionEnd: 1 });
-
-// Urgent orders bypass protection, so prioritize urgent+protection for sorting
 orderSchema.index({ isUrgent: 1, protectionEnd: 1 });
 
-// Removed less selective/redundant indexes to avoid index bloat:
-// - { isGrouped, scheduledFor } and { provider, scheduledFor } removed because
-//   the composite indexes above cover common queries and are more selective.
 
 module.exports = Order;
