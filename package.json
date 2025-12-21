@@ -5,7 +5,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon server.js",
-    "migrate:images": "node scripts/migrateImagesToHttps.js"
+    "migrate:images": "node scripts/migrateImagesToHttps.js",
+    "diagnose:images": "node scripts/diagnoseImageUrls.js"
   },
   "author": "malek chahbani",
   "license": "ISC",
