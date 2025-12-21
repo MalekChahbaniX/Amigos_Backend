@@ -62,14 +62,22 @@ router.post('/product', upload.single('image'), (req, res) => {
       return res.status(400).json({ message: 'Aucun fichier fourni' });
     }
 
-    // Construire l'URL de l'image avec détection HTTPS correcte
-    // req.secure détecte si la connexion est HTTPS directe
-    // x-forwarded-proto peut être 'https' ou 'https, http' (comma-separated)
-    const xForwardedProto = req.headers['x-forwarded-proto'];
-    const isHttps = req.secure || (xForwardedProto && xForwardedProto.includes('https'));
-    const protocol = isHttps ? 'https' : 'http';
-    const baseUrl = `${protocol}://${req.get('host')}`;
-    const imageUrl = `${baseUrl}/uploads/product/${req.file.filename}`;
+    // Return relative path - client will prepend origin as needed
+    // This avoids tying absolute URLs to runtime protocol/host
+    const relativePath = `/uploads/product/${req.file.filename}`;
+
+    // For backward compatibility, also provide absolute URL with forced HTTPS in production
+    let imageUrl = relativePath;
+    if (process.env.NODE_ENV === 'production') {
+      // Force HTTPS in production using configured base URL or default domain
+      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://amigosdelivery25.com';
+      imageUrl = `${baseUrl}${relativePath}`;
+    } else {
+      // Development: construct from request
+      const protocol = req.secure ? 'https' : 'http';
+      const host = req.get('host');
+      imageUrl = `${protocol}://${host}${relativePath}`;
+    }
 
     res.json({
       success: true,
@@ -92,14 +100,36 @@ router.post('/provider', uploadProvider.single('image'), (req, res) => {
       return res.status(400).json({ message: 'Aucun fichier fourni' });
     }
 
-    // Construire l'URL de l'image avec détection HTTPS correcte
-    // req.secure détecte si la connexion est HTTPS directe
-    // x-forwarded-proto peut être 'https' ou 'https, http' (comma-separated)
-    const xForwardedProto = req.headers['x-forwarded-proto'];
-    const isHttps = req.secure || (xForwardedProto && xForwardedProto.includes('https'));
-    const protocol = isHttps ? 'https' : 'http';
-    const baseUrl = `${protocol}://${req.get('host')}`;
-    const imageUrl = `${baseUrl}/uploads/provider/${req.file.filename}`;
+    // Return relative path - client will prepend origin as needed
+    // This avoids tying absolute URLs to runtime protocol/host
+    const relativePath = `/uploads/provider/${req.file.filename}`;
+
+    // For backward compatibility, also provide absolute URL with forced HTTPS in production
+    let imageUrl = relativePath;
+    if (process.env.NODE_ENV === 'production') {
+      // Force HTTPS in production using configured base URL or default domain
+      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://amigosdelivery25.com';
+      imageUrl = `${baseUrl}${relativePath}`;
+    } else {
+      // Development: construct from request
+      const protocol = req.secure ? 'https' : 'http';
+      const host = req.get('host');
+      imageUrl = `${protocol}://${host}${relativePath}`;
+    }
+
+    res.json({
+      success: true,
+      imageUrl: imageUrl,
+      message: 'Image uploadée avec succès'
+    });
+  } catch (error) {
+    console.error('Erreur lors de l\'upload:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'upload de l\'image'
+    });
+  }
+});
 
     res.json({
       success: true,
