@@ -41,4 +41,3 @@ router.post('/login-provider', loginProvider);
 
 module.exports = router;
 
-module.exports = router;
