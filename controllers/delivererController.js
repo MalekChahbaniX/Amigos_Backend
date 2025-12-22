@@ -11,30 +11,37 @@ exports.getDelivererOrders = async (req, res) => {
   try {
     const delivererId = req.user.id; // Récupéré du middleware d'authentification
     
-    const orders = await Order.find({ 
-      deliveryDriver: delivererId 
+    const orders = await Order.find({
+      deliveryDriver: delivererId
     })
       .populate('client', 'firstName lastName phoneNumber location')
       .populate('provider', 'name type phone address')
       .sort({ createdAt: -1 });
     
+    // Filter out orders where client or provider population failed
+    const validOrders = orders.filter(order => order.client && order.provider);
+    
+    if (validOrders.length !== orders.length) {
+      console.warn(`Warning: ${orders.length - validOrders.length} orders had null client or provider references and were filtered out`);
+    }
+    
     // Format orders for deliverer interface
-    const formattedOrders = orders.map(order => ({
+    const formattedOrders = validOrders.map(order => ({
       id: order._id,
       orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
-      client: {
+      client: order.client ? {
         id: order.client._id,
         name: `${order.client.firstName} ${order.client.lastName}`,
         phone: order.client.phoneNumber,
         location: order.client.location || {},
-      },
-      provider: {
+      } : null,
+      provider: order.provider ? {
         id: order.provider._id,
         name: order.provider.name,
         type: order.provider.type,
         phone: order.provider.phone,
         address: order.provider.address,
-      },
+      } : null,
       items: order.items.map(item => ({
         name: item.name,
         quantity: item.quantity,
@@ -76,8 +83,8 @@ exports.getDelivererAvailableOrders = async (req, res) => {
     // PROTECTION WINDOW: Only show orders where:
     // 1. protectionEnd <= now (protection expired), OR
     // 2. isUrgent: true (urgent orders bypass protection)
-    const availableOrders = await Order.find({ 
-      status: 'pending', 
+    const availableOrders = await Order.find({
+      status: 'pending',
       deliveryDriver: null,
       $or: [
         { $and: [{ protectionEnd: { $lte: now } }, { isUrgent: false }] },  // Non-urgent orders after protection
@@ -89,23 +96,30 @@ exports.getDelivererAvailableOrders = async (req, res) => {
       .populate('provider', 'name type phone address')
       .sort({ isUrgent: -1, createdAt: -1 });
     
+    // Filter out orders where client or provider population failed
+    const validOrders = availableOrders.filter(order => order.client && order.provider);
+    
+    if (validOrders.length !== availableOrders.length) {
+      console.warn(`Warning: ${availableOrders.length - validOrders.length} orders had null client or provider references and were filtered out`);
+    }
+    
     // Format available orders
-    const formattedOrders = availableOrders.map(order => ({
+    const formattedOrders = validOrders.map(order => ({
       id: order._id,
       orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
-      client: {
+      client: order.client ? {
         id: order.client._id,
         name: `${order.client.firstName} ${order.client.lastName}`,
         phone: order.client.phoneNumber,
         location: order.client.location || {},
-      },
-      provider: {
+      } : null,
+      provider: order.provider ? {
         id: order.provider._id,
         name: order.provider.name,
         type: order.provider.type,
         phone: order.provider.phone,
         address: order.provider.address,
-      },
+      } : null,
       items: order.items.map(item => ({
         name: item.name,
         quantity: item.quantity,
@@ -151,9 +165,17 @@ exports.acceptOrder = async (req, res) => {
       .populate('provider', 'name type phone address');
     
     if (!order) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Commande non trouvée' 
+        message: 'Commande non trouvée'
+      });
+    }
+    
+    // Check if populated references are null (documents not found)
+    if (!order.client || !order.provider) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande invalide: client ou fournisseur introuvable'
       });
     }
     
@@ -181,19 +203,19 @@ exports.acceptOrder = async (req, res) => {
     const formattedOrder = {
       id: order._id,
       orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
-      client: {
+      client: order.client ? {
         id: order.client._id,
         name: `${order.client.firstName} ${order.client.lastName}`,
         phone: order.client.phoneNumber,
         location: order.client.location || {},
-      },
-      provider: {
+      } : null,
+      provider: order.provider ? {
         id: order.provider._id,
         name: order.provider.name,
         type: order.provider.type,
         phone: order.provider.phone,
         address: order.provider.address,
-      },
+      } : null,
       items: order.items.map(item => ({
         name: item.name,
         quantity: item.quantity,
@@ -607,16 +629,22 @@ exports.getDelivererProfile = async (req, res) => {
       });
     }
 
-    // Get order statistics
-    const totalOrders = await Order.countDocuments({ deliveryDriver: delivererId });
-    const deliveredOrders = await Order.countDocuments({ 
-      deliveryDriver: delivererId, 
-      status: 'delivered' 
-    });
-    const cancelledOrders = await Order.countDocuments({ 
-      deliveryDriver: delivererId, 
-      status: 'cancelled' 
-    });
+    // Get order statistics with null checks for client/provider
+    const orders = await Order.find({ deliveryDriver: delivererId })
+      .populate('client', 'firstName lastName phoneNumber location')
+      .populate('provider', 'name type phone address');
+    
+    // Filter out orders where client or provider population failed
+    const validOrders = orders.filter(order => order.client && order.provider);
+    
+    if (validOrders.length !== orders.length) {
+      console.warn(`Warning: ${orders.length - validOrders.length} orders had null client or provider references in getDelivererProfile`);
+    }
+    
+    // Count by status
+    const totalOrders = validOrders.length;
+    const deliveredOrders = validOrders.filter(order => order.status === 'delivered').length;
+    const cancelledOrders = validOrders.filter(order => order.status === 'cancelled').length;
 
     res.json({
       success: true,
