@@ -1097,6 +1097,14 @@ exports.loginProvider = async (req, res) => {
       });
     }
 
+    // Vérifier que le mot de passe existe
+    if (!provider.password) {
+      console.log('Pas de mot de passe stocké pour le prestataire:', normalizedEmail);
+      return res.status(401).json({ 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
     // Vérifier le mot de passe
     const isPasswordValid = await bcrypt.compare(password, provider.password);
     
