@@ -19,6 +19,17 @@ const citySchema = new mongoose.Schema({
       message: 'Cette zone n\'existe pas'
     }
   }],
+  multiplicateur: {
+    type: Number,
+    default: 1,
+    min: [0.01, 'Le multiplicateur doit être supérieur à 0'],
+    validate: {
+      validator: function(v) {
+        return v > 0;
+      },
+      message: 'Le multiplicateur doit être un nombre positif'
+    }
+  },
   isActive: {
     type: Boolean,
     default: true

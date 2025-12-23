@@ -484,6 +484,204 @@ const deleteCity = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// 🏙️ GET city settings (multiplicateur and other configuration)
+const getCitySettings = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const city = await City.findById(id);
+
+    if (!city) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Ville non trouvée' 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: city._id,
+        name: city.name,
+        multiplicateur: city.multiplicateur || 1,
+        isActive: city.isActive,
+        activeZones: city.activeZones,
+        createdAt: city.createdAt,
+        updatedAt: city.updatedAt
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      success: false,
+      message: err.message 
+    });
+  }
+};
+
+// ✏️ UPDATE city multiplicateur
+const updateCityMultiplicateur = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { multiplicateur } = req.body;
+
+    // Validate input
+    if (multiplicateur === undefined || multiplicateur === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le multiplicateur est requis'
+      });
+    }
+
+    const multiplier = Number(multiplicateur);
+    
+    if (isNaN(multiplier) || multiplier <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le multiplicateur doit être un nombre positif (> 0)'
+      });
+    }
+
+    const city = await City.findById(id);
+    if (!city) {
+      return res.status(404).json({
+        success: false,
+        message: 'Ville non trouvée'
+      });
+    }
+
+    const oldMultiplicateur = city.multiplicateur;
+    city.multiplicateur = Number(multiplier.toFixed(2));
+    await city.save();
+
+    console.log(`📊 City ${city.name} multiplicateur updated: ${oldMultiplicateur} → ${city.multiplicateur}`);
+
+    res.json({
+      success: true,
+      message: 'Multiplicateur mise à jour avec succès',
+      data: {
+        id: city._id,
+        name: city.name,
+        multiplicateur: city.multiplicateur,
+        updatedAt: city.updatedAt
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// 🎯 GET zone garanties (minimum guarantees for each order type)
+const getZoneGaranties = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const zone = await Zone.findById(id);
+
+    if (!zone) {
+      return res.status(404).json({
+        success: false,
+        message: 'Zone non trouvée'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: zone._id,
+        number: zone.number,
+        minGarantieA1: zone.minGarantieA1 || 0,
+        minGarantieA2: zone.minGarantieA2 || 0,
+        minGarantieA3: zone.minGarantieA3 || 0,
+        minGarantieA4: zone.minGarantieA4 || 0,
+        price: zone.price,
+        minDistance: zone.minDistance,
+        maxDistance: zone.maxDistance,
+        createdAt: zone.createdAt,
+        updatedAt: zone.updatedAt
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// ✏️ UPDATE zone garanties (minimum guarantees)
+const updateZoneGaranties = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { minGarantieA1, minGarantieA2, minGarantieA3, minGarantieA4 } = req.body;
+
+    const zone = await Zone.findById(id);
+    if (!zone) {
+      return res.status(404).json({
+        success: false,
+        message: 'Zone non trouvée'
+      });
+    }
+
+    // Validate and update each guarantee
+    const garanties = {
+      minGarantieA1,
+      minGarantieA2,
+      minGarantieA3,
+      minGarantieA4
+    };
+
+    const updatedGaranties = {};
+    for (const [key, value] of Object.entries(garanties)) {
+      if (value !== undefined && value !== null) {
+        const numValue = Number(value);
+        
+        if (isNaN(numValue) || numValue < 0) {
+          return res.status(400).json({
+            success: false,
+            message: `${key} doit être un nombre positif ou zéro (>= 0)`
+          });
+        }
+
+        zone[key] = Number(numValue.toFixed(2));
+        updatedGaranties[key] = zone[key];
+      }
+    }
+
+    // Check that at least one guarantee was updated
+    if (Object.keys(updatedGaranties).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Au moins une garantie doit être fournie pour la mise à jour'
+      });
+    }
+
+    await zone.save();
+
+    console.log(`🎯 Zone ${zone.number} garanties updated:`, updatedGaranties);
+
+    res.json({
+      success: true,
+      message: 'Garanties mise à jour avec succès',
+      data: {
+        id: zone._id,
+        number: zone.number,
+        minGarantieA1: zone.minGarantieA1,
+        minGarantieA2: zone.minGarantieA2,
+        minGarantieA3: zone.minGarantieA3,
+        minGarantieA4: zone.minGarantieA4,
+        updatedAt: zone.updatedAt
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
 module.exports = {
   getUserZone,
   updateZonePrice,
@@ -497,7 +695,11 @@ module.exports = {
   deleteZone,
   updateZone,
   createZone,
-  getZoneById
+  getZoneById,
+  getCitySettings,
+  updateCityMultiplicateur,
+  getZoneGaranties,
+  updateZoneGaranties
 };
 
 

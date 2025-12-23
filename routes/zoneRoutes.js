@@ -8,7 +8,9 @@ const {
   deleteZone,
   getUserZone,
   updateZonePrice,
-  updateCityZones
+  updateCityZones,
+  getZoneGaranties,
+  updateZoneGaranties
 } = require('../controllers/zoneController');
 const { protect, isAdminOrSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 
@@ -24,6 +26,8 @@ router.post('/', protect, isSuperAdmin, createZone);
 router.put('/:id', protect, isSuperAdmin, updateZone);
 router.delete('/:id', protect, isSuperAdmin, deleteZone);
 
-
+// Zone configuration routes
+router.get('/:id/garanties', getZoneGaranties);
+router.put('/:id/garanties', protect, isAdminOrSuperAdmin, updateZoneGaranties);
 
 module.exports = router;
