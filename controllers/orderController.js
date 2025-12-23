@@ -4,7 +4,9 @@ const Promo = require('../models/Promo');
 const AppSetting = require('../models/AppSetting');
 const Zone = require('../models/Zone');
 const Product = require('../models/Product');
+const User = require('../models/User');
 const { calculateDistance } = require('../utils/distanceCalculator');
+const cancellationService = require('../services/cancellationService');
 // notifyNewOrder is now available globally from server.js
 
 // @desc    Calculate order fees (delivery + app fee) before confirming
@@ -162,6 +164,22 @@ exports.createOrder = async (req, res) => {
   } = req.body;
 
   try {
+    // CHECK CLIENT BLOCKING STATUS
+    const clientData = await User.findById(client);
+    if (!clientData) {
+      console.log('❌ Client not found:', client);
+      return res.status(404).json({ message: 'Client not found' });
+    }
+
+    if (clientData.isBlocked) {
+      console.log(`🚷 Blocked client ${client} attempted to create order`);
+      return res.status(403).json({
+        success: false,
+        message: 'Votre compte a été bloqué',
+        blockedReason: clientData.blockedReason || 'Vous n\'êtes pas autorisé à passer de commandes'
+      });
+    }
+
     // 1. Charger provider
     console.log('🔍 Fetching provider:', provider);
     const providerData = await Provider.findById(provider);
@@ -759,5 +777,189 @@ exports.getOrdersSummary = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// @desc    Cancel order by client (ANNULER_1)
+// @route   POST /api/orders/:id/cancel-client
+// @access  Private (client)
+exports.cancelOrderByClient = async (req, res) => {
+  const { id: orderId } = req.params;
+  const clientId = req.user.id;
+
+  try {
+    const order = await Order.findById(orderId)
+      .populate('client')
+      .populate('deliveryDriver')
+      .populate('zone');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Verify the order belongs to the client
+    if (order.client._id.toString() !== clientId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Vous n\'êtes pas autorisé à annuler cette commande'
+      });
+    }
+
+    // Check if order can still be cancelled by client (not already accepted/assigned)
+    if (order.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cette commande ne peut plus être annulée par le client'
+      });
+    }
+
+    // Handle ANNULER_1
+    const result = await cancellationService.handleAnnuler1(order);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      order: {
+        id: order._id,
+        status: order.status,
+        cancellationType: order.cancellationType,
+        cancellationSolde: order.cancellationSolde
+      }
+    });
+  } catch (error) {
+    console.error('Error in cancelOrderByClient:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cancel order by provider (ANNULER_2)
+// @route   POST /api/orders/:id/cancel-provider
+// @access  Private (provider)
+exports.cancelOrderByProvider = async (req, res) => {
+  const { id: orderId } = req.params;
+  const { reason } = req.body;
+  const providerId = req.user.id;
+
+  try {
+    const order = await Order.findById(orderId)
+      .populate('client')
+      .populate('provider')
+      .populate('deliveryDriver')
+      .populate('zone');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Verify the order belongs to the provider
+    if (order.provider._id.toString() !== providerId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Vous n\'êtes pas autorisé à annuler cette commande'
+      });
+    }
+
+    // Check if order can be cancelled by provider
+    if (!['pending', 'accepted', 'collected'].includes(order.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cette commande ne peut plus être annulée par le prestataire'
+      });
+    }
+
+    const cancellationReason = reason || 'Produit indisponible';
+
+    // Handle ANNULER_2
+    const result = await cancellationService.handleAnnuler2(order, cancellationReason);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      order: {
+        id: order._id,
+        status: order.status,
+        cancellationType: order.cancellationType,
+        cancellationSolde: order.cancellationSolde
+      }
+    });
+  } catch (error) {
+    console.error('Error in cancelOrderByProvider:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cancel order by admin (ANNULER_3)
+// @route   POST /api/orders/:id/cancel-admin
+// @access  Private (admin/superAdmin)
+exports.cancelOrderByAdmin = async (req, res) => {
+  const { id: orderId } = req.params;
+  const adminId = req.user.id;
+
+  try {
+    // Verify user is admin or superAdmin
+    const admin = await User.findById(adminId);
+    if (!admin || !['admin', 'superAdmin'].includes(admin.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Seuls les administrateurs peuvent annuler les commandes'
+      });
+    }
+
+    const order = await Order.findById(orderId)
+      .populate('client')
+      .populate('provider')
+      .populate('deliveryDriver')
+      .populate('zone');
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Check if order can be cancelled by admin
+    if (order.status === 'delivered' || order.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cette commande ne peut plus être annulée'
+      });
+    }
+
+    // Handle ANNULER_3
+    const result = await cancellationService.handleAnnuler3(order, adminId);
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      clientBlocked: result.clientBlocked,
+      order: {
+        id: order._id,
+        status: order.status,
+        cancellationType: order.cancellationType,
+        cancellationSolde: order.cancellationSolde
+      }
+    });
+  } catch (error) {
+    console.error('Error in cancelOrderByAdmin:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message
+    });
   }
 };

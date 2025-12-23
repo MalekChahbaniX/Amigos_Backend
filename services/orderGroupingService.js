@@ -37,6 +37,21 @@ function isClientInRange(clientLocation, deliveryAddress) {
 }
 
 /**
+ * COMMENT 2: Check if two delivery addresses are close to each other
+ * For A2/A3 grouping, we need delivery addresses to be close, not client locations
+ */
+function areDeliveryAddressesClose(deliveryAddress1, deliveryAddress2) {
+  if (!deliveryAddress1 || !deliveryAddress2) return false;
+  const dist = calculateDistance(
+    deliveryAddress1.latitude,
+    deliveryAddress1.longitude,
+    deliveryAddress2.latitude,
+    deliveryAddress2.longitude
+  );
+  return dist <= MAX_CLIENT_DISTANCE;
+}
+
+/**
  * Find candidate orders for grouping:
  * - status: pending
  * - not yet grouped (isGrouped: false)
@@ -74,10 +89,10 @@ async function groupOrdersIntoA2(order1, order2) {
   try {
     // Verify distance constraints
     const providersClose = areProvidersClose(order1.provider.location, order2.provider.location);
-    const client1InRange = isClientInRange(order1.client.location, order1.deliveryAddress);
-    const client2InRange = isClientInRange(order2.client.location, order2.deliveryAddress);
+    // COMMENT 2: Check delivery-to-delivery distance, not client-to-delivery
+    const deliveriesClose = areDeliveryAddressesClose(order1.deliveryAddress, order2.deliveryAddress);
 
-    if (!providersClose || !client1InRange || !client2InRange) {
+    if (!providersClose || !deliveriesClose) {
       return null; // Not eligible for grouping
     }
 
@@ -114,13 +129,14 @@ async function groupOrdersIntoA3(order1, order2, order3) {
     const providersClose13 = areProvidersClose(order1.provider.location, order3.provider.location);
     const providersClose23 = areProvidersClose(order2.provider.location, order3.provider.location);
 
-    const clientsInRange1 = isClientInRange(order1.client.location, order1.deliveryAddress);
-    const clientsInRange2 = isClientInRange(order2.client.location, order2.deliveryAddress);
-    const clientsInRange3 = isClientInRange(order3.client.location, order3.deliveryAddress);
+    // COMMENT 2: Check delivery-to-delivery distances, not client-to-delivery
+    const deliveriesClose12 = areDeliveryAddressesClose(order1.deliveryAddress, order2.deliveryAddress);
+    const deliveriesClose13 = areDeliveryAddressesClose(order1.deliveryAddress, order3.deliveryAddress);
+    const deliveriesClose23 = areDeliveryAddressesClose(order2.deliveryAddress, order3.deliveryAddress);
 
     if (
       !providersClose12 || !providersClose13 || !providersClose23 ||
-      !clientsInRange1 || !clientsInRange2 || !clientsInRange3
+      !deliveriesClose12 || !deliveriesClose13 || !deliveriesClose23
     ) {
       return null; // Not eligible
     }

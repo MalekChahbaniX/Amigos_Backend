@@ -123,8 +123,25 @@ const userSchema = new mongoose.Schema({
   ],
   status: {
     type: String,
-    enum: ['active', 'inactive', 'pending'],
+    enum: ['active', 'inactive', 'pending', 'occupé'],
     default: 'pending',
+  },
+  activeOrdersCount: {
+    type: Number,
+    default: 0,
+  },
+  // Account blocking (for clients)
+  isBlocked: {
+    type: Boolean,
+    default: false,
+  },
+  blockedReason: {
+    type: String,
+    default: null,
+  },
+  blockedAt: {
+    type: Date,
+    default: null,
   },
   createdAt: {
     type: Date,

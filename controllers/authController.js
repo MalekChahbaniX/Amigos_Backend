@@ -371,7 +371,7 @@ exports.registerUser = async (req, res) => {
 // @route   POST /api/auth/register-super-admin
 // @access  Public (mais devrait être sécurisé en production)
 exports.registerSuperAdmin = async (req, res) => {
-  const { email, password, firstName, lastName } = req.body;
+  const { email, password, firstName, lastName,role } = req.body;
 
   try {
     console.log('=== DEBUT REGISTER SUPER ADMIN ===');
@@ -426,7 +426,7 @@ exports.registerSuperAdmin = async (req, res) => {
       password: hashedPassword,
       firstName: firstName || '',
       lastName: lastName || '',
-      role: 'superAdmin',
+      role: role || 'superAdmin',
       isVerified: true, // Le super admin est automatiquement vérifié
       status: 'active'
     });

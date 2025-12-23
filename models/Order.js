@@ -80,6 +80,30 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'collected', 'in_delivery', 'delivered', 'cancelled'],
     default: 'pending',
   },
+  // CANCELLATION FIELDS
+  cancellationType: {
+    type: String,
+    enum: ['ANNULER_1', 'ANNULER_2', 'ANNULER_3'],
+    default: null,
+    sparse: true,
+  },
+  cancellationSolde: {
+    type: Number,
+    default: null,
+  },
+  cancellationReason: {
+    type: String,
+    default: null,
+  },
+  cancelledBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  cancelledAt: {
+    type: Date,
+    default: null,
+  },
   // PROVIDER PAYMENT: Payment method(s) for grouped orders
   // Can be string for single order or array for grouped orders
   providerPaymentMode: {
