@@ -2,6 +2,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const Session = require('../models/Session');
 const balanceCalc = require('../services/balanceCalculator');
+const delivererValidator = require('../services/delivererOrderValidation');
 const { protect, isDeliverer } = require('../middleware/auth');
 
 // @desc    Get orders assigned to a deliverer
@@ -160,9 +161,19 @@ exports.acceptOrder = async (req, res) => {
   const delivererId = req.user.id;
 
   try {
+    // Fetch deliverer with their active orders count
+    const deliverer = await User.findById(delivererId);
+    if (!deliverer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Livreur non trouvé'
+      });
+    }
+
     const order = await Order.findById(orderId)
       .populate('client', 'firstName lastName phoneNumber location')
-      .populate('provider', 'name type phone address');
+      .populate('provider', 'name type phone address location')
+      .populate('zone');
     
     if (!order) {
       return res.status(404).json({
@@ -178,26 +189,89 @@ exports.acceptOrder = async (req, res) => {
         message: 'Commande invalide: client ou fournisseur introuvable'
       });
     }
-    
-    if (order.status !== 'pending') {
-      return res.status(400).json({ 
+
+    // Validate that deliverer can accept the order
+    const canAcceptValidation = delivererValidator.canAcceptOrder(deliverer, order);
+    if (!canAcceptValidation.canAccept) {
+      return res.status(400).json({
         success: false,
-        message: 'La commande ne peut pas être acceptée dans son état actuel' 
-      });
-    }
-    
-    if (order.deliveryDriver && order.deliveryDriver.toString() !== delivererId) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'La commande a déjà été assignée à un autre livreur' 
+        message: canAcceptValidation.reason
       });
     }
 
+    // Get current active orders count
+    const activeOrdersCount = deliverer.activeOrdersCount || 0;
+
+    // Validate distance criteria based on current number of active orders
+    if (activeOrdersCount === 1) {
+      // Trying to accept a second order - validate A2 criteria
+      const activeOrders = await Order.find({
+        deliveryDriver: delivererId,
+        status: { $nin: ['delivered', 'cancelled'] }
+      })
+        .populate('client', 'location')
+        .populate('provider', 'location')
+        .populate('zone');
+
+      if (activeOrders.length >= 1) {
+        const validation = delivererValidator.validateA2Criteria(activeOrders[0], order);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: `Critères A2 non respectés: ${validation.reason}`
+          });
+        }
+      }
+    } else if (activeOrdersCount === 2) {
+      // Trying to accept a third order - validate A3 criteria
+      const activeOrders = await Order.find({
+        deliveryDriver: delivererId,
+        status: { $nin: ['delivered', 'cancelled'] }
+      })
+        .populate('client', 'location')
+        .populate('provider', 'location')
+        .populate('zone');
+
+      if (activeOrders.length >= 2) {
+        const validation = delivererValidator.validateA3Criteria(activeOrders[0], activeOrders[1], order);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: `Critères A3 non respectés: ${validation.reason}`
+          });
+        }
+      }
+    }
+
     // Assign the order to the deliverer
-    // orderType is NOT set here; it will be assigned when transitioning to 'in_delivery'
+    // Status remains 'pending' until system validates all criteria (already done above)
     order.deliveryDriver = delivererId;
+    
+    // COMMENT 3: Determine order type, preserving A4 for urgent orders
+    // Check if order is urgent/A4 first; if not, determine by active count
+    if (order.isUrgent) {
+      // Force A4 for urgent orders and don't let it be overwritten
+      order.orderType = 'A4';
+    } else {
+      // For non-urgent orders, determine type based on active orders count
+      const orderType = delivererValidator.determineOrderTypeByCount(activeOrdersCount);
+      order.orderType = orderType;
+    }
+
     order.status = 'accepted';
     await order.save();
+
+    // Increment deliverer's active orders count
+    deliverer.activeOrdersCount = (deliverer.activeOrdersCount || 0) + 1;
+
+    // Update deliverer status to 'occupé' if they now have active orders
+    if (deliverer.activeOrdersCount > 0) {
+      deliverer.status = 'occupé';
+    }
+
+    await deliverer.save();
+
+    console.log(`📦 Deliverer ${delivererId}: Accepted order ${orderId} (orderType=${orderType}, activeCount=${deliverer.activeOrdersCount})`);
 
     // Return complete order details
     const formattedOrder = {
@@ -224,6 +298,7 @@ exports.acceptOrder = async (req, res) => {
       total: order.totalAmount,
       solde: order.platformSolde ? order.platformSolde.toFixed(3) : '0.000',
       status: order.status,
+      orderType: order.orderType,
       deliveryAddress: order.deliveryAddress,
       paymentMethod: order.paymentMethod,
       finalAmount: order.finalAmount,
@@ -234,7 +309,11 @@ exports.acceptOrder = async (req, res) => {
     res.json({
       success: true,
       message: 'Commande acceptée avec succès',
-      order: formattedOrder
+      order: formattedOrder,
+      deliverStatus: {
+        activeOrdersCount: deliverer.activeOrdersCount,
+        status: deliverer.status
+      }
     });
   } catch (error) {
     console.error('Error in acceptOrder:', error);
@@ -420,6 +499,27 @@ exports.updateOrderStatus = async (req, res) => {
 
     order.status = status;
     await order.save();
+
+    // Handle delivery or cancellation: decrement active orders count
+    if (status === 'delivered' || status === 'cancelled') {
+      try {
+        const deliverer = await User.findById(delivererId);
+        if (deliverer) {
+          // Decrement active orders count
+          deliverer.activeOrdersCount = Math.max(0, (deliverer.activeOrdersCount || 1) - 1);
+
+          // Change status from 'occupé' to 'active' if no more active orders
+          if (deliverer.activeOrdersCount === 0 && deliverer.status === 'occupé') {
+            deliverer.status = 'active';
+          }
+
+          await deliverer.save();
+          console.log(`👤 Deliverer ${delivererId}: activeOrdersCount=${deliverer.activeOrdersCount}, status=${deliverer.status}`);
+        }
+      } catch (delErr) {
+        console.error('Error updating deliverer active orders count:', delErr);
+      }
+    }
 
     // If delivered, compute solde fields and persist (real-time calculation)
     if (status === 'delivered') {

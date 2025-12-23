@@ -6,8 +6,11 @@ const {
   createCity,
   updateCity,
   deleteCity,
-  updateCityZones
+  updateCityZones,
+  getCitySettings,
+  updateCityMultiplicateur
 } = require('../controllers/zoneController');
+const { protect, isAdminOrSuperAdmin } = require('../middleware/auth');
 
 // City CRUD routes
 router.get('/', getCities);
@@ -18,5 +21,9 @@ router.delete('/:id', deleteCity);
 
 // City utility routes
 router.put('/:id/zones', updateCityZones);
+
+// City settings and configuration routes
+router.get('/:id/settings', getCitySettings);
+router.put('/:id/multiplicateur', protect, isAdminOrSuperAdmin, updateCityMultiplicateur);
 
 module.exports = router;

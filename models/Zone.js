@@ -33,6 +33,22 @@ const zoneSchema = new mongoose.Schema({
     required: [true, 'Le prix est obligatoire'],
     min: [0, 'Le prix ne peut pas être négatif']
   },
+  minGarantieA1: {
+    type: Number,
+    default: 0,
+  },
+  minGarantieA2: {
+    type: Number,
+    default: 0,
+  },
+  minGarantieA3: {
+    type: Number,
+    default: 0,
+  },
+  minGarantieA4: {
+    type: Number,
+    default: 0,
+  },
   createdAt: {
     type: Date,
     default: Date.now
