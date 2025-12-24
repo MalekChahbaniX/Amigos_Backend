@@ -4,7 +4,7 @@ const Provider = require('../models/Provider');
 
 // @desc    Get dashboard statistics
 // @route   GET /api/dashboard/stats
-// @access  Private (Super Admin only)
+// @access  Private (Admin or Super Admin)
 exports.getDashboardStats = async (req, res) => {
   try {
     // Get today's date range
@@ -12,19 +12,32 @@ exports.getDashboardStats = async (req, res) => {
     const startOfDay = new Date(today.setHours(0, 0, 0, 0));
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
+    // Build match stage based on user role
+    let matchStage = {
+      createdAt: { $gte: startOfDay, $lte: endOfDay }
+    };
+
+    // If admin, filter by their city
+    if (req.user.role === 'admin' && req.user.city) {
+      matchStage.city = req.user.city;
+    }
+
     // Get counts for today
     const todayOrders = await Order.countDocuments({
-      createdAt: { $gte: startOfDay, $lte: endOfDay }
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
     });
 
     const activeClients = await User.countDocuments({
       role: 'client',
-      status: 'active'
+      status: 'active',
+      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
     });
 
     const activeDeliverers = await User.countDocuments({
       role: 'deliverer',
-      status: 'active'
+      status: 'active',
+      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
     });
 
     // Calculate today's revenue (sum of client-paid amounts)
@@ -32,7 +45,8 @@ exports.getDashboardStats = async (req, res) => {
       {
         $match: {
           createdAt: { $gte: startOfDay, $lte: endOfDay },
-          status: { $in: ['delivered', 'completed'] }
+          status: { $in: ['delivered', 'completed'] },
+          ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
         }
       },
       {
@@ -48,7 +62,8 @@ exports.getDashboardStats = async (req, res) => {
       {
         $match: {
           createdAt: { $gte: startOfDay, $lte: endOfDay },
-          status: { $in: ['delivered', 'completed'] }
+          status: { $in: ['delivered', 'completed'] },
+          ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
         }
       },
       {
@@ -338,14 +353,21 @@ exports.getDelivererOrders = async (req, res) => {
 
 // @desc    Get recent orders
 // @route   GET /api/dashboard/recent-orders
-// @access  Private (Super Admin only)
+// @access  Private (Admin or Super Admin)
 exports.getRecentOrders = async (req, res) => {
   try {
-    const recentOrders = await Order.find()
+    let query = {};
+    
+    // If admin, filter by their city
+    if (req.user.role === 'admin' && req.user.city) {
+      query.city = req.user.city;
+    }
+
+    const recentOrders = await Order.find(query)
       .sort({ createdAt: -1 })
       .limit(10)
       .populate('client', 'firstName lastName')
-      .select('orderNumber totalAmount status createdAt');
+      .select('orderNumber totalAmount status createdAt clientProductsPrice platformSolde');
 
     const formattedOrders = recentOrders.map(order => ({
       id: order.orderNumber || order._id.toString(),
@@ -372,13 +394,18 @@ exports.getRecentOrders = async (req, res) => {
 
 // @desc    Get all orders with pagination and filtering
 // @route   GET /api/dashboard/orders
-// @access  Private (Super Admin only)
+// @access  Private (Admin or Super Admin)
 exports.getAllOrders = async (req, res) => {
   try {
     const { page = 1, limit = 10, search, status } = req.query;
     const skip = (page - 1) * limit;
     
     let matchStage = {};
+    
+    // If admin, filter by their city
+    if (req.user.role === 'admin' && req.user.city) {
+      matchStage.city = req.user.city;
+    }
     
     if (search) {
       matchStage.$or = [
@@ -569,13 +596,20 @@ exports.assignDeliverer = async (req, res) => {
 
 // @desc    Get active deliverers
 // @route   GET /api/dashboard/active-deliverers
-// @access  Private (Super Admin only)
+// @access  Private (Admin or Super Admin)
 exports.getActiveDeliverers = async (req, res) => {
   try {
-    const activeDeliverers = await User.find({
+    let query = {
       role: 'deliverer',
       status: 'active'
-    }).select('firstName lastName phoneNumber location');
+    };
+
+    // If admin, filter by their city
+    if (req.user.role === 'admin' && req.user.city) {
+      query.city = req.user.city;
+    }
+
+    const activeDeliverers = await User.find(query).select('firstName lastName phoneNumber location');
 
     const formattedDeliverers = activeDeliverers.map(deliverer => ({
       id: deliverer._id,
