@@ -11,10 +11,10 @@ const {
   assignDeliverer,
   getActiveDeliverers
 } = require('../controllers/dashboardController');
-const { isSuperAdmin } = require('../middleware/auth');
+const { isAdminOrSuperAdmin, isSuperAdmin } = require('../middleware/auth');
 
-// All dashboard routes require super admin authentication
-router.use(isSuperAdmin);
+// All dashboard routes require admin or super admin authentication
+router.use(isAdminOrSuperAdmin);
 
 router.get('/stats', getDashboardStats);
 router.get('/platform-balance', getPlatformBalance);
