@@ -127,6 +127,8 @@ exports.getProviders = async (req, res) => {
       image: provider.image, // Photo de couverture
       profileImage: provider.profileImage, // NOUVEAU : Photo de profil
       location: provider.location,
+      paymentMethod: provider.paymentMethod,
+      workingHours: provider.workingHours,
       totalOrders: 0,
       rating: 0,
     }));
@@ -163,7 +165,7 @@ exports.getProviderById = async (req, res) => {
 exports.createProvider = async (req, res) => {
   try {
     // Ajouter profileImage et password à la destructuration
-    const { name, type, phone, address, email, password, description, image, profileImage, location } = req.body;
+    const { name, type, phone, address, email, password, description, image, profileImage, location, paymentMethod, workingHours } = req.body;
 
     if (!name || !phone || !address || !email || !password) {
       return res.status(400).json({
@@ -198,6 +200,8 @@ exports.createProvider = async (req, res) => {
       ...(description && { description }),
       ...(image && { image }), // Couverture
       ...(profileImage && { profileImage }), // Profil
+      ...(paymentMethod && { paymentMethod }),
+      ...(workingHours && { workingHours }),
       status: 'active'
     });
 
@@ -222,7 +226,7 @@ exports.updateProvider = async (req, res) => {
     }
 
     // Ajouter profileImage et password à la destructuration
-    const { name, type, phone, address, email, password, description, image, profileImage, location } = req.body;
+    const { name, type, phone, address, email, password, description, image, profileImage, location, paymentMethod, workingHours } = req.body;
 
     if (!name || !phone || !address) {
       return res.status(400).json({
@@ -257,6 +261,8 @@ exports.updateProvider = async (req, res) => {
       ...(description !== undefined && { description }),
       ...(image && { image }), // Mise à jour couverture
       ...(profileImage && { profileImage }), // Mise à jour profil
+      ...(paymentMethod && { paymentMethod }),
+      ...(workingHours && { workingHours })
     };
 
     // Hash new password if provided

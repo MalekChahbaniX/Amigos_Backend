@@ -13,6 +13,8 @@ const {
   verifyDelivererOTP,
   registerAdmin,
   loginAdmin,
+  getAdmins,
+  updateAdmin,
   registerProvider,
   loginProvider,
   checkOTPServiceHealth,
@@ -39,6 +41,8 @@ router.post('/verify-deliverer', verifyDelivererOTP);
 // Routes pour les admins
 router.post('/register-admin', registerAdmin);
 router.post('/login-admin', loginAdmin);
+router.get('/admins', isSuperAdmin, getAdmins);
+router.put('/admins/:id', isSuperAdmin, updateAdmin);
 
 // Routes pour les prestataires
 router.post('/register-provider', registerProvider);

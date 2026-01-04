@@ -400,7 +400,77 @@ exports.getDelivererEarnings = async (req, res) => {
     });
   }
 };
-
+// @desc    Get deliverer daily balance (admin access)
+// @route   GET /api/deliverers/:id/balance
+// @access  Private (Admin/SuperAdmin)
+exports.getDelivererBalance = async (req, res) => {
+  try {
+    const delivererId = req.params.id;
+    const { date } = req.query; // Optional YYYY-MM-DD format
+    
+    // Build query with role check
+    const query = { _id: delivererId, role: 'deliverer' };
+    if (req.user && req.user.role === 'admin') {
+      if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
+      query.city = req.user.city;
+    }
+    
+    // Fetch deliverer with dailyBalance populated
+    const deliverer = await User.findOne(query)
+      .select('firstName lastName phoneNumber dailyBalance')
+      .populate('dailyBalance.orders', 'orderNumber totalPrice status');
+    
+    if (!deliverer) {
+      return res.status(404).json({ message: 'Livreur non trouvé' });
+    }
+    
+    // If date specified, filter to that date
+    let balanceData = deliverer.dailyBalance || [];
+    if (date) {
+      const targetDate = new Date(date);
+      targetDate.setHours(0, 0, 0, 0);
+      balanceData = balanceData.filter(entry => {
+        const entryDate = new Date(entry.date);
+        entryDate.setHours(0, 0, 0, 0);
+        return entryDate.getTime() === targetDate.getTime();
+      });
+    }
+    
+    // Calculate totals
+    const totalSoldeAmigos = balanceData.reduce((sum, entry) => sum + (entry.soldeAmigos || 0), 0);
+    const totalSoldeAnnulation = balanceData.reduce((sum, entry) => sum + (entry.soldeAnnulation || 0), 0);
+    const netBalance = totalSoldeAmigos - totalSoldeAnnulation;
+    const totalOrders = balanceData.reduce((sum, entry) => sum + (entry.orders?.length || 0), 0);
+    
+    res.status(200).json({
+      deliverer: {
+        id: deliverer._id.toString(),
+        name: `${deliverer.firstName} ${deliverer.lastName}`.trim(),
+        phone: deliverer.phoneNumber
+      },
+      balance: {
+        cashIn: totalSoldeAmigos.toFixed(3),
+        cashOut: totalSoldeAnnulation.toFixed(3),
+        netBalance: netBalance.toFixed(3),
+        totalOrders,
+        entries: balanceData.map(entry => ({
+          date: entry.date,
+          soldeAmigos: entry.soldeAmigos,
+          soldeAnnulation: entry.soldeAnnulation,
+          paid: entry.paid,
+          paidAt: entry.paidAt,
+          ordersCount: entry.orders?.length || 0
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching deliverer balance:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la récupération de la balance',
+      error: error.message
+    });
+  }
+};
 // @desc    Get deliverer detailed statistics
 // @route   GET /api/deliverers/:id/stats
 // @access  Private (Super Admin only)

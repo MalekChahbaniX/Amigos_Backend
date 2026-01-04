@@ -1424,3 +1424,150 @@ exports.testOTPService = async (req, res) => {
     });
   }
 };
+
+// @desc    Récupérer tous les administrateurs
+// @route   GET /api/auth/admins
+// @access  Private (SuperAdmin)
+exports.getAdmins = async (req, res) => {
+  try {
+    console.log('=== DEBUT GET ADMINS ===');
+
+    // Récupérer tous les utilisateurs avec le rôle 'admin'
+    const admins = await User.find({ role: 'admin' })
+      .populate('city', 'name')
+      .select('firstName lastName email city createdAt')
+      .sort({ createdAt: -1 });
+
+    console.log(`${admins.length} administrateurs trouvés`);
+
+    // Formatter la réponse
+    const formattedAdmins = admins.map((admin) => ({
+      id: admin._id,
+      firstName: admin.firstName,
+      lastName: admin.lastName,
+      email: admin.email,
+      cityName: admin.city ? admin.city.name : 'N/A',
+      cityId: admin.city ? admin.city._id : null,
+      createdAt: admin.createdAt
+    }));
+
+    res.status(200).json({
+      message: 'Administrateurs récupérés avec succès',
+      admins: formattedAdmins
+    });
+  } catch (error) {
+    console.error('=== ERREUR GET ADMINS ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({
+      message: 'Erreur serveur lors de la récupération des administrateurs',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Mettre à jour un administrateur
+// @route   PUT /api/auth/admins/:id
+// @access  Private (SuperAdmin)
+exports.updateAdmin = async (req, res) => {
+  try {
+    console.log('=== DEBUT UPDATE ADMIN ===');
+    const { id } = req.params;
+    const { email, firstName, lastName, cityId, password } = req.body;
+
+    console.log('Tentative de mise à jour de l\'admin:', id);
+
+    // Vérifier que l'admin existe et a le rôle 'admin'
+    const admin = await User.findOne({ _id: id, role: 'admin' });
+    if (!admin) {
+      console.log('Admin non trouvé:', id);
+      return res.status(404).json({
+        message: 'Administrateur non trouvé'
+      });
+    }
+
+    // Construire l'objet de mise à jour
+    const updateData = {};
+
+    // Valider et ajouter email s'il est fourni
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Format d\'email invalide' });
+      }
+
+      const normalizedEmail = email.toLowerCase();
+
+      // Vérifier que l'email n'est pas déjà utilisé par un autre utilisateur (quelconque)
+      const existingUser = await User.findOne({
+        _id: { $ne: id },
+        email: normalizedEmail
+      });
+      if (existingUser) {
+        return res.status(400).json({
+          message: 'Cet email est déjà utilisé par un autre utilisateur'
+        });
+      }
+
+      updateData.email = normalizedEmail;
+    }
+
+    // Ajouter firstName et lastName s'ils sont fournis
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+
+    // Valider et ajouter la ville s'il est fourni
+    if (cityId) {
+      const city = await City.findById(cityId);
+      if (!city) {
+        return res.status(404).json({ message: 'Ville non trouvée' });
+      }
+      updateData.city = cityId;
+    }
+
+    // Hasher et ajouter le mot de passe s'il est fourni
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({
+          message: 'Le mot de passe doit contenir au moins 6 caractères'
+        });
+      }
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(password, salt);
+    }
+
+    // Mettre à jour l'admin
+    const updatedAdmin = await User.findOneAndUpdate(
+      { _id: id, role: 'admin' },
+      updateData,
+      { new: true }
+    ).populate('city', 'name');
+
+    console.log('Admin mis à jour avec succès:', updatedAdmin._id);
+
+    res.status(200).json({
+      message: 'Administrateur mis à jour avec succès',
+      admin: {
+        id: updatedAdmin._id,
+        firstName: updatedAdmin.firstName,
+        lastName: updatedAdmin.lastName,
+        email: updatedAdmin.email,
+        cityId: updatedAdmin.city ? updatedAdmin.city._id : null
+      }
+    });
+  } catch (error) {
+    console.error('=== ERREUR UPDATE ADMIN ===');
+    console.error('Erreur complète:', error);
+
+    // Gérer les erreurs de clé dupliquée MongoDB
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: 'Cet email est déjà utilisé par un autre utilisateur'
+      });
+    }
+
+    res.status(500).json({
+      message: 'Erreur serveur lors de la mise à jour de l\'administrateur',
+      error: error.message
+    });
+  }
+};

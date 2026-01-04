@@ -47,6 +47,32 @@ const providerSchema = new mongoose.Schema({
     enum: ['active', 'inactive'],
     default: 'active',
   },
+  paymentMethod: {
+    type: String,
+    enum: ['facture', 'espece'],
+    default: 'espece'
+  },
+  workingHours: [
+    {
+      day: {
+        type: String,
+        enum: ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'],
+        required: true
+      },
+      isOpen: {
+        type: Boolean,
+        default: true
+      },
+      openTime: {
+        type: String,
+        default: "09:00"
+      },
+      closeTime: {
+        type: String,
+        default: "22:00"
+      }
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now

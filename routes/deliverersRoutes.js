@@ -6,13 +6,15 @@ const {
   createDeliverer,
   updateDelivererStatus,
   deleteDeliverer,
-  getDelivererSessions
+  getDelivererSessions,
+  getDelivererBalance
 } = require('../controllers/deliverersController');
 const { protect, isAdminOrSuperAdmin } = require('../middleware/auth');
 
 // Deliverer routes: accessible to super admins and city admins (protected)
 router.get('/', protect, isAdminOrSuperAdmin, getDeliverers);
 router.get('/sessions', protect, isAdminOrSuperAdmin, getDelivererSessions);
+router.get('/:id/balance', protect, isAdminOrSuperAdmin, getDelivererBalance);
 router.get('/:id', protect, isAdminOrSuperAdmin, getDelivererById);
 router.post('/', protect, isAdminOrSuperAdmin, createDeliverer);
 router.put('/:id/status', protect, isAdminOrSuperAdmin, updateDelivererStatus);

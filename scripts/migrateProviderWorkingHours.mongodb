@@ -1,0 +1,34 @@
+/**
+ * Alternative: Script MongoDB direct (sans Mongoose)
+ * Utiliser MongoDB Compass ou mongosh pour exécuter cette commande
+ * 
+ * ATTENTION: Testez d'abord sur une copie de la base de données!
+ */
+
+// Définir les horaires par défaut
+const defaultWorkingHours = [
+  { day: 'lundi', isOpen: true, openTime: '09:00', closeTime: '22:00' },
+  { day: 'mardi', isOpen: true, openTime: '09:00', closeTime: '22:00' },
+  { day: 'mercredi', isOpen: true, openTime: '09:00', closeTime: '22:00' },
+  { day: 'jeudi', isOpen: true, openTime: '09:00', closeTime: '22:00' },
+  { day: 'vendredi', isOpen: false, openTime: '09:00', closeTime: '22:00' },
+  { day: 'samedi', isOpen: true, openTime: '09:00', closeTime: '22:00' },
+  { day: 'dimanche', isOpen: true, openTime: '09:00', closeTime: '22:00' }
+];
+
+// Exécuter dans MongoDB
+db.providers.updateMany(
+  {
+    $or: [
+      { workingHours: { $exists: false } },
+      { workingHours: null },
+      { workingHours: { $eq: [] } }
+    ]
+  },
+  {
+    $set: { workingHours: defaultWorkingHours }
+  }
+);
+
+// Afficher le résultat
+db.providers.find({ workingHours: { $exists: true } }).count();
