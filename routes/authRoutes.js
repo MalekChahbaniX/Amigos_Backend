@@ -14,9 +14,14 @@ const {
   registerAdmin,
   loginAdmin,
   registerProvider,
-  loginProvider
+  loginProvider,
+  checkOTPServiceHealth,
+  getOTPMetrics,
+  getOTPServiceStatus,
+  testOTPService
 } = require('../controllers/authController');
 const OTPService = require('../services/otpService');
+const { isSuperAdmin } = require('../middleware/auth');
 
 
 router.post('/register', registerUser);
@@ -38,6 +43,20 @@ router.post('/login-admin', loginAdmin);
 // Routes pour les prestataires
 router.post('/register-provider', registerProvider);
 router.post('/login-provider', loginProvider);
+
+// ============= OTP MONITORING ROUTES =============
+
+// OTP Service Health Check
+router.get('/otp/health', isSuperAdmin, checkOTPServiceHealth);
+
+// OTP Service Metrics
+router.get('/otp/metrics', isSuperAdmin, getOTPMetrics);
+
+// OTP Service Status Dashboard
+router.get('/otp/status', isSuperAdmin, getOTPServiceStatus);
+
+// Test OTP Service
+router.post('/otp/test', isSuperAdmin, testOTPService);
 
 module.exports = router;
 

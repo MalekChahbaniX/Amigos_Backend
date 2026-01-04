@@ -233,6 +233,7 @@ const optionGroupRoutes = require('./routes/optionGroupRoutes');
 const productOptionRoutes = require('./routes/productOptionRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 app.use('/api/app-settings', appSettingRoutes);
 app.use('/api/promos', promoRoutes);
@@ -249,6 +250,7 @@ app.use('/api/deliverer', delivererRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use("/api/zones", zoneRoutes);
 app.use('/api/cities', cityRoutes);
 app.use('/api/option-groups', optionGroupRoutes);

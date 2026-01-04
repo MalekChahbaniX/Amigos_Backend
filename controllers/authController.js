@@ -2,9 +2,55 @@ const User = require('../models/User');
 const OTP = require('../models/OTP');
 const City = require('../models/City');
 const Session = require('../models/Session');
+const OTPLog = require('../models/OTPLog');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const OTPService = require('../services/otpService');
+
+// Fonction pour mapper les erreurs Twilio en messages utilisateur
+const getOTPErrorMessage = (error) => {
+    const errorMap = {
+        'Authenticate': {
+            message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+            statusCode: 503,
+            canRetry: true
+        },
+        'Authentication': {
+            message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+            statusCode: 503,
+            canRetry: true
+        },
+        'Twilio non disponible': {
+            message: 'Service d\'envoi SMS non configuré. Contactez l\'administrateur.',
+            statusCode: 503,
+            canRetry: false
+        },
+        'Numéro de téléphone invalide': {
+            message: 'Le numéro de téléphone fourni est invalide',
+            statusCode: 400,
+            canRetry: false
+        },
+        'Échec de l\'envoi OTP': {
+            message: 'Impossible d\'envoyer le code de vérification. Veuillez réessayer.',
+            statusCode: 500,
+            canRetry: true
+        }
+    };
+    
+    // Chercher une correspondance dans le message d'erreur
+    for (const [key, value] of Object.entries(errorMap)) {
+        if (error.message.includes(key)) {
+            return value;
+        }
+    }
+    
+    // Erreur par défaut
+    return {
+        message: 'Une erreur est survenue lors de l\'envoi du code',
+        statusCode: 500,
+        canRetry: true
+    };
+};
 
 // Fonction pour générer un JWT
 const generateToken = (id) => {
@@ -116,94 +162,46 @@ exports.loginUser = async (req, res) => {
         console.log('Nouveau OTP sauvegardé');
 
         // Essayer d'envoyer l'OTP via SMS et/ou WhatsApp
-        let channelsSent = [];
-        let errorMessage = '';
-        let success = false;
-        let actualDelivery = false;
-        let deliveryStatus = 'pending';
-
         try {
           const result = await OTPService.sendOTP(phoneNumber, otp);
-          console.log('OTP envoyé avec succès via:', result.channels);
+          console.log('✓ OTP envoyé avec succès via:', result.channels);
           console.log('Réponses:', result.responses);
-          channelsSent = result.channels || [];
-          success = result.success || false;
           
-          // Vérifier si l'OTP a été réellement envoyé
-          if (result.responses && result.responses.length > 0) {
-            const sentResponses = result.responses.filter(r => r.status && r.status !== 'failed');
-            actualDelivery = sentResponses.length > 0;
-          }
-          
-          // Vérifier si c'est une erreur d'authentification
-          if (result.responses && result.responses.some(r => r.errorMessage === 'Authentication failed')) {
-            deliveryStatus = 'auth_error';
-            errorMessage = 'Erreur d\'authentification Twilio';
-          } else if (!actualDelivery && !success) {
-            deliveryStatus = 'failed';
-            errorMessage = 'Échec de l\'envoi de l\'OTP';
-          } else {
-            deliveryStatus = 'sent';
-          }
-        } catch (smsError) {
-          console.error('Erreur envoi OTP:', smsError.message);
-          errorMessage = smsError.message;
-          deliveryStatus = 'failed';
-          // On continue même si l'envoi échoue
-        }
-
-        // Déterminer le message en fonction des canaux utilisés et du statut de livraison
-        let message = 'Code de vérification généré';
-        if (deliveryStatus === 'auth_error') {
-          message = 'Code généré (erreur d\'authentification Twilio)';
-        } else if (deliveryStatus === 'sent') {
-          if (channelsSent.includes('whatsapp') && channelsSent.includes('sms')) {
+          // Déterminer le message selon les canaux utilisés
+          let message = 'Code de vérification généré';
+          if (result.channels.includes('whatsapp') && result.channels.includes('sms')) {
             message = 'Code de vérification envoyé par WhatsApp et SMS';
-          } else if (channelsSent.includes('whatsapp')) {
+          } else if (result.channels.includes('whatsapp')) {
             message = 'Code de vérification envoyé par WhatsApp';
-          } else if (channelsSent.includes('sms')) {
+          } else if (result.channels.includes('sms')) {
             message = 'Code de vérification envoyé par SMS';
           }
-        } else {
-          message = 'Code généré mais non envoyé';
+          
+          return res.status(200).json({
+            _id: user._id,
+            phoneNumber: user.phoneNumber,
+            isVerified: false,
+            channelsSent: result.channels,
+            otpSent: true,
+            message
+          });
+          
+        } catch (smsError) {
+          console.error('❌ Erreur envoi OTP:', smsError.message);
+          
+          // Supprimer l'OTP de la base de données car il n'a pas été envoyé
+          await OTP.deleteMany({ phone: phoneNumber });
+          console.log('OTP supprimé car non envoyé');
+          
+          const errorInfo = getOTPErrorMessage(smsError);
+          
+          return res.status(errorInfo.statusCode).json({
+            message: errorInfo.message,
+            error: smsError.message,
+            otpSent: false,
+            canRetry: errorInfo.canRetry
+          });
         }
-
-        // Réponse adaptée selon le succès de l'envoi
-        const response = {
-          _id: user._id,
-          phoneNumber: user.phoneNumber,
-          isVerified: false,
-          channelsSent,
-          otpSent: success || channelsSent.length > 0,
-          deliveryStatus,
-        };
-
-        if (success || channelsSent.length > 0) {
-          response.message = message;
-          
-          // Si c'est une erreur d'authentification, inclure le code pour permettre la vérification
-          if (deliveryStatus === 'auth_error') {
-            response.debugOtp = otp;
-            response.message += ` - Code: ${otp}`;
-          }
-          
-          // En développement, inclure le code pour tester facilement
-          // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-          //   response.debugOtp = otp;
-          //   response.devMessage = `Code pour tester: ${otp}`;
-          // }
-        } else {
-          response.message = message;
-          response.error = errorMessage;
-          
-          // En cas d'échec total, retourner le code en mode développement
-          // if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
-          //   response.debugOtp = otp;
-          //   response.message += ` - Code de debug: ${otp}`;
-          // }
-        }
-
-        return res.status(200).json(response);
 
       } catch (otpError) {
         console.error('Erreur lors de la gestion OTP:', otpError);
@@ -1140,6 +1138,289 @@ exports.loginProvider = async (req, res) => {
     res.status(500).json({
       message: 'Erreur serveur lors de la connexion du prestataire',
       error:   error.message
+    });
+  }
+};
+
+// ============= OTP MONITORING ENDPOINTS =============
+
+// Check OTP Service Health
+exports.checkOTPServiceHealth = async (req, res) => {
+  try {
+    // Test the connection
+    const connectionTest = await OTPService.testConnection();
+    
+    // Get recent success rate (last 1 hour)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recentLogs = await OTPLog.find({
+      createdAt: { $gte: oneHourAgo }
+    });
+    
+    const successCount = recentLogs.filter(log => log.status === 'success').length;
+    const totalCount = recentLogs.length;
+    const successRate = totalCount > 0 ? (successCount / totalCount) * 100 : 100;
+    
+    // Get credential validation status
+    const credentialsValid = await OTPService.validateCredentials();
+    
+    const health = {
+      status: connectionTest.success && credentialsValid.valid ? 'healthy' : 'unhealthy',
+      timestamp: new Date(),
+      details: {
+        twilio_connection: connectionTest.success ? 'connected' : 'disconnected',
+        credentials_valid: credentialsValid.valid,
+        recent_success_rate: parseFloat(successRate.toFixed(2)),
+        attempts_last_hour: totalCount,
+        successful_sends: successCount
+      }
+    };
+    
+    const statusCode = health.status === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(health);
+  } catch (error) {
+    console.error('Error checking OTP service health:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to check OTP service health',
+      error: error.message
+    });
+  }
+};
+
+// Get OTP Metrics
+exports.getOTPMetrics = async (req, res) => {
+  try {
+    // Get metrics for different time periods
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    // Aggregation pipeline for detailed metrics
+    const metricsAggregation = [
+      {
+        $facet: {
+          lastHour: [
+            { $match: { createdAt: { $gte: oneHourAgo } } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' },
+                channels: { $push: '$channel' }
+              }
+            }
+          ],
+          last24Hours: [
+            { $match: { createdAt: { $gte: twentyFourHoursAgo } } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' },
+                channels: { $push: '$channel' }
+              }
+            }
+          ],
+          last7Days: [
+            { $match: { createdAt: { $gte: sevenDaysAgo } } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' },
+                channels: { $push: '$channel' }
+              }
+            }
+          ],
+          errorDistribution: [
+            { $match: { 'errorDetails.type': { $exists: true } } },
+            {
+              $group: {
+                _id: '$errorDetails.type',
+                count: { $sum: 1 },
+                lastOccurrence: { $max: '$createdAt' }
+              }
+            },
+            { $sort: { count: -1 } }
+          ],
+          channelComparison: [
+            {
+              $group: {
+                _id: '$channel',
+                totalAttempts: { $sum: 1 },
+                successCount: {
+                  $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] }
+                },
+                avgResponseTime: { $avg: '$responseTime' }
+              }
+            }
+          ]
+        }
+      }
+    ];
+    
+    const metrics = await OTPLog.aggregate(metricsAggregation);
+    
+    res.status(200).json({
+      timestamp: new Date(),
+      metrics: metrics[0]
+    });
+  } catch (error) {
+    console.error('Error getting OTP metrics:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve OTP metrics',
+      error: error.message
+    });
+  }
+};
+
+// Get OTP Service Status (Dashboard view)
+exports.getOTPServiceStatus = async (req, res) => {
+  try {
+    // Get health check
+    const connectionTest = await OTPService.testConnection();
+    const credentialsValid = await OTPService.validateCredentials();
+    
+    // Get recent activity
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentLogs = await OTPLog.find({
+      createdAt: { $gte: twentyFourHoursAgo }
+    }).sort({ createdAt: -1 }).limit(10);
+    
+    // Get error trends
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recentErrors = await OTPLog.aggregate([
+      { $match: { createdAt: { $gte: oneHourAgo }, status: 'failed' } },
+      {
+        $group: {
+          _id: '$errorDetails.type',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+    
+    // Get success rate for last hour
+    const oneHourLogs = await OTPLog.find({
+      createdAt: { $gte: oneHourAgo }
+    });
+    const successCount = oneHourLogs.filter(log => log.status === 'success').length;
+    const successRate = oneHourLogs.length > 0 ? (successCount / oneHourLogs.length) * 100 : 100;
+    
+    const status = {
+      timestamp: new Date(),
+      health: {
+        twilio_connection: connectionTest.success ? 'connected' : 'disconnected',
+        credentials_valid: credentialsValid.valid,
+        overall_status: connectionTest.success && credentialsValid.valid ? 'operational' : 'degraded'
+      },
+      performance: {
+        success_rate_last_hour: parseFloat(successRate.toFixed(2)),
+        total_attempts_last_hour: oneHourLogs.length,
+        successful_sends: successCount
+      },
+      recent_errors: recentErrors.slice(0, 5),
+      recent_activity: recentLogs.map(log => ({
+        phoneNumber: log.phoneNumber,
+        status: log.status,
+        channel: log.channel,
+        errorType: log.errorDetails?.type || null,
+        timestamp: log.createdAt
+      }))
+    };
+    
+    res.status(200).json(status);
+  } catch (error) {
+    console.error('Error getting OTP service status:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve OTP service status',
+      error: error.message
+    });
+  }
+};
+
+// Test OTP Service
+exports.testOTPService = async (req, res) => {
+  try {
+    const { phoneNumber } = req.body;
+    
+    // Validate phone number
+    if (!phoneNumber || typeof phoneNumber !== 'string') {
+      return res.status(400).json({
+        message: 'Phone number is required'
+      });
+    }
+    
+    // Generate a test OTP (6-digit code)
+    const testOTP = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Send test OTP
+    const testResult = await OTPService.sendOTP(phoneNumber, testOTP);
+    
+    // Determine which channel was used for logging
+    const channels = testResult.channels || [];
+    const logChannel = channels.length > 0 ? channels[0] : 'sms';
+    
+    // Create log entry with valid data from test
+    const testLog = new OTPLog({
+      phoneNumber,
+      otp: testOTP,
+      channel: logChannel,
+      status: testResult.success ? 'success' : 'partial',
+      attempts: 1,
+      responseTime: testResult.responseTime || 0,
+      twilioResponses: testResult.responses || [],
+      credentialsValid: true,
+      metadata: {
+        isTest: true,
+        testedAt: new Date()
+      }
+    });
+    
+    await testLog.save();
+    
+    res.status(200).json({
+      message: 'OTP test successful',
+      data: {
+        phoneNumber,
+        channels: channels,
+        otp: testOTP,
+        status: testResult.success ? 'sent' : 'partial',
+        timestamp: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error testing OTP service:', error);
+    
+    // Log the failed test
+    const { phoneNumber } = req.body;
+    if (phoneNumber) {
+      const failedLog = new OTPLog({
+        phoneNumber,
+        otp: 'test',
+        channel: 'unknown',
+        status: 'failed',
+        attempts: 1,
+        responseTime: 0,
+        errorDetails: {
+          type: 'test_failure',
+          message: error.message,
+          code: error.code || 'UNKNOWN'
+        },
+        metadata: {
+          isTest: true,
+          testedAt: new Date()
+        }
+      });
+      
+      await failedLog.save().catch(logError => {
+        console.error('Failed to log test error:', logError);
+      });
+    }
+    
+    res.status(500).json({
+      message: 'OTP test failed',
+      error: error.message
     });
   }
 };
