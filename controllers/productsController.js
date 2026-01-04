@@ -337,9 +337,9 @@ exports.getProducts = async (req, res) => {
 
     const formattedProducts = products.map(product => {
       const formatted = formatProductResponse(product);
-      if (formatted.variants) {
-        console.log(`✅ Product "${formatted.name}" has ${formatted.variants.length} variants:`, formatted.variants);
-      }
+      // if (formatted.variants) {
+      //   console.log(`✅ Product "${formatted.name}" has ${formatted.variants.length} variants:`, formatted.variants);
+      // }
       return formatted;
     });
 

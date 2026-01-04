@@ -59,17 +59,21 @@ exports.getProfile = async (req, res) => {
     }
 
     const user = await User.findById(userId)
-      .select('firstName lastName email phoneNumber role status location')
+      .select('firstName lastName avatar email phoneNumber role status location')
       .populate('location.zone', 'number minDistance maxDistance price');
 
     if (!user) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
-    }
-
+    }    
+    console.log('🔵 [updateLocation] Utilisateur mis à jour:', {
+      userId: user._id,
+      location: user.location
+    });
     res.status(200).json({
       profile: {
         firstName: user.firstName,
         lastName: user.lastName,
+        avatar: user.avatar,
         email: user.email,
         phoneNumber: user.phoneNumber,
         role: user.role,
@@ -91,7 +95,7 @@ exports.getProfile = async (req, res) => {
 // @access Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { firstName, lastName, email, phoneNumber } = req.body;
+    const { firstName, lastName, email, phoneNumber, avatar } = req.body;
     const userId = req.user?.id || req.body.userId;
 
     if (!userId) {
@@ -127,11 +131,12 @@ exports.updateProfile = async (req, res) => {
       {
         ...(firstName && { firstName }),
         ...(lastName && { lastName }),
+        ...(avatar !== undefined && { avatar }),
         ...(email && { email: email.toLowerCase() }),
         ...(phoneNumber && { phoneNumber })
       },
       { new: true }
-    ).select('firstName lastName email phoneNumber role status');
+    ).select('firstName lastName avatar email phoneNumber role status');
 
     if (!user) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
@@ -142,6 +147,7 @@ exports.updateProfile = async (req, res) => {
       profile: {
         firstName: user.firstName,
         lastName: user.lastName,
+        avatar: user.avatar,
         email: user.email,
         phoneNumber: user.phoneNumber,
         role: user.role,
@@ -162,8 +168,12 @@ exports.updateProfile = async (req, res) => {
 // @access Private
 exports.updateLocation = async (req, res) => {
   try {
+    console.log('🔵 [updateLocation] === DÉBUT DE LA REQUÊTE ===');
+    console.log('🔵 [updateLocation] req.body complet:', JSON.stringify(req.body, null, 2));
+    
     const { location } = req.body;
     const userId = req.user?.id || req.body.userId;
+    console.log('🔵 [updateLocation] userId:', userId);
 
     if (!userId) {
       return res.status(400).json({ message: 'ID utilisateur requis' });
@@ -173,7 +183,17 @@ exports.updateLocation = async (req, res) => {
       return res.status(400).json({ message: 'Données de localisation invalides' });
     }
 
-    const { latitude, longitude, address } = location;
+    const { latitude, longitude, address, city, postalCode } = location;
+
+    console.log('🔵 [updateLocation] Données extraites de location:', {
+      latitude: latitude,
+      longitude: longitude,
+      latitudeType: typeof latitude,
+      longitudeType: typeof longitude,
+      address: address,
+      city: city,
+      postalCode: postalCode
+    });
 
     if (latitude === undefined || longitude === undefined) {
       return res.status(400).json({ message: 'Latitude et longitude requises' });
@@ -183,16 +203,23 @@ exports.updateLocation = async (req, res) => {
       return res.status(400).json({ message: 'Latitude et longitude doivent être des nombres' });
     }
 
+    console.log('✅ [updateLocation] Validation réussie - Coordonnées valides');
+
     // Mettre à jour la localisation
+    const updateObject = {
+      $set: {
+        'location.latitude': latitude,
+        'location.longitude': longitude,
+        ...(address && { 'location.address': address }),
+        ...(city && { 'location.city': city }),
+        ...(postalCode && { 'location.postalCode': postalCode })
+      }
+    };
+    console.log('🔵 [updateLocation] Objet de mise à jour MongoDB:', JSON.stringify(updateObject, null, 2));
+    
     const user = await User.findByIdAndUpdate(
       userId,
-      {
-        $set: {
-          'location.latitude': latitude,
-          'location.longitude': longitude,
-          ...(address && { 'location.address': address })
-        }
-      },
+      updateObject,
       { new: true }
     ).select('firstName lastName email phoneNumber role status location');
 
@@ -200,13 +227,24 @@ exports.updateLocation = async (req, res) => {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
 
+    console.log('🔵 [updateLocation] Utilisateur mis à jour:', {
+      userId: user._id,
+      location: user.location
+    });
+
     // Attribuer la zone automatiquement
     const zoneInfo = await assignZoneForUser(userId, latitude, longitude);
-
+    console.log('🔵 [updateLocation] Zone attribuée:', zoneInfo);
     // Récupérer l'utilisateur mis à jour avec la zone
     const updatedUser = await User.findById(userId)
       .select('location')
       .populate('location.zone', 'number minDistance maxDistance price');
+
+    console.log('🔵 [updateLocation] Données de réponse:', {
+      location: updatedUser.location,
+      zoneInfo: zoneInfo
+    });
+    console.log('🔵 [updateLocation] === FIN DE LA REQUÊTE ===\n');
 
     res.status(200).json({
       message: 'Localisation mise à jour avec succès',
@@ -532,11 +570,31 @@ exports.addAddress = async (req, res) => {
 
     const { label, address: addressStr, city, postalCode, phoneNumber, instructions, isDefault, latitude, longitude } = address;
 
-    // Créer une nouvelle localisation
+    // Validation et application des coordonnées avec fallback aux valeurs par défaut
+    let finalLatitude = 36.8065; // Valeur par défaut
+    let finalLongitude = 10.1815; // Valeur par défaut
+
+    // Vérifier et utiliser la latitude fournie si elle est valide
+    if (latitude !== undefined && latitude !== null) {
+      if (typeof latitude === 'number' && !isNaN(latitude) && latitude >= -90 && latitude <= 90) {
+        finalLatitude = latitude;
+      }
+    }
+
+    // Vérifier et utiliser la longitude fournie si elle est valide
+    if (longitude !== undefined && longitude !== null) {
+      if (typeof longitude === 'number' && !isNaN(longitude) && longitude >= -180 && longitude <= 180) {
+        finalLongitude = longitude;
+      }
+    }
+
+    // Créer une nouvelle localisation avec les coordonnées validées ou defaults
     const location = {
-      latitude: latitude || 36.8065,
-      longitude: longitude || 10.1815,
-      address: addressStr || `${label || 'Address'}, ${city || ''}`
+      latitude: finalLatitude,
+      longitude: finalLongitude,
+      address: addressStr || `${label || 'Address'}, ${city || ''}`,
+      city: city,
+      postalCode: postalCode
     };
 
     const user = await User.findByIdAndUpdate(
@@ -545,7 +603,9 @@ exports.addAddress = async (req, res) => {
         $set: {
           'location.latitude': location.latitude,
           'location.longitude': location.longitude,
-          'location.address': location.address
+          'location.address': location.address,
+          ...(location.city && { 'location.city': location.city }),
+          ...(location.postalCode && { 'location.postalCode': location.postalCode })
         }
       },
       { new: true }
@@ -570,6 +630,7 @@ exports.addAddress = async (req, res) => {
         label: label || 'New Address',
         address: location.address,
         city: city || 'Tunis',
+        postalCode: location.postalCode,
         latitude: location.latitude,
         longitude: location.longitude,
         zone: updatedUser.location.zone,
@@ -607,11 +668,31 @@ exports.updateAddress = async (req, res) => {
 
     const { label, address: addressStr, city, postalCode, phoneNumber, instructions, isDefault, latitude, longitude } = address;
 
-    // Mettre à jour la localisation
+    // Validation et application des coordonnées avec fallback aux valeurs par défaut
+    let finalLatitude = 36.8065; // Valeur par défaut
+    let finalLongitude = 10.1815; // Valeur par défaut
+
+    // Vérifier et utiliser la latitude fournie si elle est valide
+    if (latitude !== undefined && latitude !== null) {
+      if (typeof latitude === 'number' && !isNaN(latitude) && latitude >= -90 && latitude <= 90) {
+        finalLatitude = latitude;
+      }
+    }
+
+    // Vérifier et utiliser la longitude fournie si elle est valide
+    if (longitude !== undefined && longitude !== null) {
+      if (typeof longitude === 'number' && !isNaN(longitude) && longitude >= -180 && longitude <= 180) {
+        finalLongitude = longitude;
+      }
+    }
+
+    // Mettre à jour la localisation avec les coordonnées validées ou defaults
     const location = {
-      latitude: latitude || 36.8065,
-      longitude: longitude || 10.1815,
-      address: addressStr || `${label || 'Address'}, ${city || ''}`
+      latitude: finalLatitude,
+      longitude: finalLongitude,
+      address: addressStr || `${label || 'Address'}, ${city || ''}`,
+      city: city,
+      postalCode: postalCode
     };
 
     const user = await User.findByIdAndUpdate(
@@ -620,7 +701,9 @@ exports.updateAddress = async (req, res) => {
         $set: {
           'location.latitude': location.latitude,
           'location.longitude': location.longitude,
-          'location.address': location.address
+          'location.address': location.address,
+          ...(location.city && { 'location.city': location.city }),
+          ...(location.postalCode && { 'location.postalCode': location.postalCode })
         }
       },
       { new: true }
@@ -645,6 +728,7 @@ exports.updateAddress = async (req, res) => {
         label: label || 'Updated Address',
         address: location.address,
         city: city || 'Tunis',
+        postalCode: location.postalCode,
         latitude: location.latitude,
         longitude: location.longitude,
         zone: updatedUser.location.zone,

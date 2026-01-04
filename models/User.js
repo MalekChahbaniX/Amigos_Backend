@@ -27,6 +27,10 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  avatar: {
+    type: String,
+    default: '',
+  },
   role: {
     type: String,
     enum: ['client', 'superAdmin', 'deliverer', 'admin', 'provider'],
@@ -79,6 +83,8 @@ const userSchema = new mongoose.Schema({
     latitude: Number,
     longitude: Number,
     address: String,
+    city: String,
+    postalCode: String,
     zone: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Zone'
@@ -153,6 +159,37 @@ const userSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+});
+
+// Middleware pour logger les modifications avant sauvegarde
+userSchema.pre('save', function(next) {
+  if (this.isModified('location')) {
+    console.log('💾 [User.pre-save] Sauvegarde de location pour user:', this._id);
+    console.log('💾 [User.pre-save] Nouvelles coordonnées:', {
+      latitude: this.location?.latitude,
+      longitude: this.location?.longitude,
+      address: this.location?.address,
+      city: this.location?.city,
+      postalCode: this.location?.postalCode
+    });
+  }
+  next();
+});
+
+// Middleware pour logger les modifications avant findOneAndUpdate
+userSchema.pre('findOneAndUpdate', function(next) {
+  const update = this.getUpdate();
+  if (update.$set && (update.$set['location.latitude'] || update.$set['location.longitude'])) {
+    console.log('💾 [User.pre-findOneAndUpdate] Mise à jour de location');
+    console.log('💾 [User.pre-findOneAndUpdate] Nouvelles coordonnées:', {
+      latitude: update.$set['location.latitude'],
+      longitude: update.$set['location.longitude'],
+      address: update.$set['location.address'],
+      city: update.$set['location.city'],
+      postalCode: update.$set['location.postalCode']
+    });
+  }
+  next();
 });
 
 // Index pour améliorer les performances

@@ -27,10 +27,23 @@ const protect = async (req, res, next) => {
 
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error);
-      return res.status(401).json({
+      console.error('Auth middleware error:', error.message);
+      
+      // Provide specific error messages based on error type
+      let errorMessage = 'Token invalide ou expiré';
+      let statusCode = 401;
+      
+      if (error.name === 'JsonWebTokenError') {
+        errorMessage = 'Token invalide ou malformé';
+        statusCode = 401;
+      } else if (error.name === 'TokenExpiredError') {
+        errorMessage = 'Token expiré';
+        statusCode = 401;
+      }
+      
+      return res.status(statusCode).json({
         success: false,
-        message: 'Token invalide ou expiré'
+        message: errorMessage
       });
     }
   }
