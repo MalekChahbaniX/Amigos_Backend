@@ -119,8 +119,17 @@ const orderSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    enum: ['cash', 'online'],
+    enum: ['cash', 'online', 'card'],
     required: true,
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'failed', 'refunded'],
+    default: 'pending',
+  },
+  transactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Transaction',
   },
   deliveryDriver: {
     type: mongoose.Schema.Types.ObjectId,

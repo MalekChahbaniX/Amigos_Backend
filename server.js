@@ -11,18 +11,62 @@ const { startGroupingScheduler, stopGroupingScheduler } = require('./services/or
 // Charger les variables d'environnement
 dotenv.config();
 
+// Valider les variables d'environnement requises
+const validateEnvironmentVariables = () => {
+  const requiredEnvVars = [
+    'MONGO_URI',
+    'JWT_SECRET',
+    'FLOUCI_PUBLIC_KEY',
+    'FLOUCI_PRIVATE_KEY',
+    'FLOUCI_DEVELOPER_TRACKING_ID',
+    'BACKEND_URL'
+  ];
+
+  const missing = requiredEnvVars.filter(varName => !process.env[varName] || process.env[varName].trim() === '');
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing);
+    console.error('Please check your .env file and ensure all required variables are set.');
+    process.exit(1);
+  }
+  
+  console.log('✅ All required environment variables are set');
+};
+
+// Valider les variables d'environnement avant de continuer
+validateEnvironmentVariables();
+
 // Se connecter à la base de données
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB connected successfully!');
+    console.log('🔗 Connecting to MongoDB...');
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 10000
+    });
+    console.log('✅ MongoDB connected successfully!');
+    
+    // Verify connection state
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('MongoDB connection state is not ready (readyState !== 1)');
+    }
+    console.log('✅ MongoDB connection verified');
   } catch (err) {
-    console.error(`Error connecting to MongoDB: ${err.message}`);
+    console.error(`❌ Error connecting to MongoDB: ${err.message}`);
     process.exit(1);
   }
 };
 
-connectDB();
+// Ajouter un gestionnaire pour les erreurs de connexion MongoDB après l'initialisation
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error after initialization:', err.message);
+  process.exit(1);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected unexpectedly');
+});
 
 const app = express();
 
@@ -264,14 +308,37 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`Socket.IO server listening for real-time notifications`);
-  
-  // Start the order grouping scheduler
-  startGroupingScheduler();
-  console.log('✅ Order grouping scheduler started');
-});
+
+// Fonction IIFE pour gérer l'initialisation asynchrone
+(async () => {
+  try {
+    // Attendre la connexion MongoDB
+    await connectDB();
+    
+    // Vérifier l'état de la connexion
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('Failed to establish MongoDB connection');
+    }
+    
+    // Démarrer le serveur HTTP
+    server.listen(PORT, () => {
+      console.log(`🚀 Server is running on port ${PORT}`);
+      console.log(`🔌 Socket.IO server listening for real-time notifications`);
+      
+      // Démarrer le scheduler de regroupement de commandes après le démarrage du serveur
+      try {
+        startGroupingScheduler();
+        console.log('✅ Order grouping scheduler started successfully');
+      } catch (schedulerError) {
+        console.error('❌ Error starting order grouping scheduler:', schedulerError.message);
+        // Le serveur continue à fonctionner même si le scheduler échoue
+      }
+    });
+  } catch (initError) {
+    console.error('❌ Fatal error during server initialization:', initError.message);
+    process.exit(1);
+  }
+})();
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
