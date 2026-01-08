@@ -59,10 +59,17 @@ exports.createPayment = async ({ amount, orderId, successUrl, failureUrl, webhoo
     
     console.log('✅ Flouci API response:', response.data);
     
-    // Flouci returns: { link: "...", payment_id: "..." }
+    // Flouci returns nested response: { result: { link: "...", payment_id: "..." }, ... }
+    const resultData = response.data.result || response.data;
+    
+    if (!resultData.link || !resultData.payment_id) {
+      console.error('❌ Invalid Flouci response structure:', JSON.stringify(response.data, null, 2));
+      throw new Error(`Invalid Flouci response structure: missing link or payment_id`);
+    }
+    
     return {
-      payment_url: response.data.link,
-      id: response.data.payment_id,
+      payment_url: resultData.link,
+      id: resultData.payment_id,
     };
   } catch (error) {
     console.error('❌ Flouci API error:', error.message);

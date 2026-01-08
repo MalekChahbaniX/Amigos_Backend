@@ -19,7 +19,6 @@ const validateEnvironmentVariables = () => {
     'FLOUCI_PUBLIC_KEY',
     'FLOUCI_PRIVATE_KEY',
     'FLOUCI_DEVELOPER_TRACKING_ID',
-    'BACKEND_URL'
   ];
 
   const missing = requiredEnvVars.filter(varName => !process.env[varName] || process.env[varName].trim() === '');

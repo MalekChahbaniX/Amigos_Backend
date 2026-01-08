@@ -33,7 +33,8 @@ exports.initiateFlouciPayment = async (req, res) => {
 
     // Configure Flouci redirect URLs - Flouci requires valid HTTP URLs
     // The backend will receive these redirects and then redirect to the mobile deep link
-    const backendUrl = process.env.BACKEND_URL || 'https://amigosdelivery25.com';
+    //const backendUrl = 'https://amigosdelivery25.com';
+    const backendUrl = 'http://192.168.1.104:5000';
     const successUrl = `${backendUrl}/api/payments/flouci-success`;
     const failureUrl = `${backendUrl}/api/payments/flouci-failure`;
     
@@ -45,13 +46,24 @@ exports.initiateFlouciPayment = async (req, res) => {
 
     console.log('🔌 Calling Flouci API...');
     // Call Flouci API with HTTP redirect URLs
-    const paymentData = await flouciAPI.createPayment({
-      amount,
-      orderId,
-      successUrl,
-      failureUrl,
-      webhookUrl,
-    });
+    let paymentData;
+    try {
+      paymentData = await flouciAPI.createPayment({
+        amount,
+        orderId,
+        successUrl,
+        failureUrl,
+        webhookUrl,
+      });
+    } catch (flouciError) {
+      console.error('❌ Flouci API call failed:', flouciError.message);
+      throw new Error(`Flouci API failed: ${flouciError.message}`);
+    }
+
+    if (!paymentData || !paymentData.payment_url) {
+      console.error('❌ Invalid payment data from Flouci:', paymentData);
+      throw new Error('Flouci API returned invalid payment data');
+    }
 
     console.log('💳 Payment data received from Flouci:', { 
       payment_url: paymentData.payment_url,
