@@ -102,14 +102,6 @@ function validateA2Criteria(order1, order2) {
       };
     }
 
-    // Validate client locations exist
-    if (!order1.client?.location || !order2.client?.location) {
-      return {
-        valid: false,
-        reason: 'Données de localisation du client manquantes'
-      };
-    }
-
     // Validate delivery addresses exist
     if (!order1.deliveryAddress || !order2.deliveryAddress) {
       return {
@@ -171,14 +163,6 @@ function validateA3Criteria(order1, order2, order3) {
       return {
         valid: false,
         reason: 'Données de localisation du fournisseur manquantes'
-      };
-    }
-
-    // Validate all client locations exist
-    if (!order1.client?.location || !order2.client?.location || !order3.client?.location) {
-      return {
-        valid: false,
-        reason: 'Données de localisation du client manquantes'
       };
     }
 

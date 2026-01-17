@@ -5,8 +5,13 @@ const FLOUCI_PUBLIC_KEY = process.env.FLOUCI_PUBLIC_KEY;
 const FLOUCI_PRIVATE_KEY = process.env.FLOUCI_PRIVATE_KEY;
 const FLOUCI_DEVELOPER_TRACKING_ID = process.env.FLOUCI_DEVELOPER_TRACKING_ID;
 
-exports.createPayment = async ({ amount, orderId, successUrl, failureUrl, webhookUrl }) => {
-  console.log('🔌 Flouci API - Creating payment with:', { amount, orderId, successUrl, failureUrl, webhookUrl });
+exports.createPayment = async ({ amount, orderId, successUrl, failureUrl, webhookUrl, paymentMethodType = 'wallet' }) => {
+  console.log('🔌 Flouci API - Creating payment with:', { amount, orderId, successUrl, failureUrl, webhookUrl, paymentMethodType });
+  if (paymentMethodType === 'card') {
+    console.log('💳 Initiating CARD payment');
+  } else {
+    console.log('💰 Initiating WALLET payment');
+  }
   console.log('🔑 FLOUCI_PUBLIC_KEY exists:', !!FLOUCI_PUBLIC_KEY);
   console.log('🔑 FLOUCI_PRIVATE_KEY exists:', !!FLOUCI_PRIVATE_KEY);
   console.log('🌐 FLOUCI_BASE_URL:', FLOUCI_BASE_URL);
@@ -34,6 +39,14 @@ exports.createPayment = async ({ amount, orderId, successUrl, failureUrl, webhoo
       success_link: successUrl,
       fail_link: failureUrl || successUrl, // Use success URL as fallback if failure URL not provided
     };
+
+    // Set accept_card based on payment method type
+    if (paymentMethodType === 'card') {
+      payload.accept_card = true;
+    } else {
+      payload.accept_card = false;
+    }
+    console.log('💳 Accept card payments:', payload.accept_card);
 
     // Add optional fields if provided
     if (FLOUCI_DEVELOPER_TRACKING_ID) {

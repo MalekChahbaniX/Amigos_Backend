@@ -181,6 +181,11 @@ const productSchema = new mongoose.Schema(
       default: 'restaurant',
     },
     
+    requiresPrescription: {
+      type: Boolean,
+      default: false,
+    },
+    
     availability: {
       type: Boolean,
       default: true,
@@ -276,6 +281,7 @@ productSchema.index({ status: 1 });
 productSchema.index({ provider: 1 });
 productSchema.index({ unitType: 1 });
 productSchema.index({ sku: 1 });
+productSchema.index({ requiresPrescription: 1 });
 productSchema.index({ 'variants.sku': 1 });
 
 const Product = mongoose.model('Product', productSchema);

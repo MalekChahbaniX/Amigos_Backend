@@ -209,6 +209,7 @@ exports.acceptOrder = async (req, res) => {
         deliveryDriver: delivererId,
         status: { $nin: ['delivered', 'cancelled'] }
       })
+        .select('deliveryAddress client provider zone status')
         .populate('client', 'location')
         .populate('provider', 'location')
         .populate('zone');
@@ -228,6 +229,7 @@ exports.acceptOrder = async (req, res) => {
         deliveryDriver: delivererId,
         status: { $nin: ['delivered', 'cancelled'] }
       })
+        .select('deliveryAddress client provider zone status')
         .populate('client', 'location')
         .populate('provider', 'location')
         .populate('zone');
@@ -258,8 +260,16 @@ exports.acceptOrder = async (req, res) => {
       order.orderType = orderType;
     }
 
+    // Capture the final orderType value for logging
+    const orderType = order.orderType;
+
     order.status = 'accepted';
     await order.save();
+
+    // Cancel auto-cancellation timer since order is now accepted
+    if (global.cancelOrderAutoCancellation) {
+      global.cancelOrderAutoCancellation(orderId);
+    }
 
     // Increment deliverer's active orders count
     deliverer.activeOrdersCount = (deliverer.activeOrdersCount || 0) + 1;

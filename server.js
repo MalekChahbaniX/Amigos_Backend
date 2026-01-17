@@ -81,6 +81,7 @@ const corsOptions = {
     'http://127.0.0.1:5173',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:8081', // React Native
+    'http://192.168.1.104:5000'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -122,14 +123,18 @@ const server = http.createServer(app);
 const { Server } = require('socket.io');
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    methods: ["GET", "POST"],
+    origin: 'https://amigosdelivery25.com',
+    //origin: 'http://192.168.1.104:5000',
+    methods: ["GET", "POST","PUT","DELETE","PATCH"],
     credentials: true
   }
 });
 
 // Store active deliverers with their push tokens
 const activeDeliverers = new Map();
+
+// Store active admins
+const activeAdmins = new Map();
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
@@ -145,6 +150,20 @@ io.on("connection", (socket) => {
     socket.emit("status", {
       status: "online",
       delivererId,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Join admin to a room
+  socket.on("join-admin", (data) => {
+    const { adminId } = data;
+    socket.join(`admin-${adminId}`);
+    activeAdmins.set(adminId, socket.id);
+    console.log(`👤 Admin ${adminId} joined room`);
+    
+    socket.emit("status", {
+      status: "online",
+      adminId,
       timestamp: new Date().toISOString()
     });
   });
@@ -187,6 +206,15 @@ io.on("connection", (socket) => {
         break;
       }
     }
+
+    // Remove from active admins
+    for (const [adminId, socketId] of activeAdmins.entries()) {
+      if (socketId === socket.id) {
+        activeAdmins.delete(adminId);
+        console.log(`👤 Admin ${adminId} removed from active list`);
+        break;
+      }
+    }
   });
 });
 
@@ -221,7 +249,10 @@ async function notifyNewOrder(order) {
     createdAt: order.createdAt,
     platformSolde: order.platformSolde,
     distance: order.distance,
-    zone: order.zone
+    zone: order.zone,
+    orderType: order.orderType || 'A1',
+    isGrouped: !!order.isGrouped,
+    groupSize: order.groupedOrders ? order.groupedOrders.length : 1,
   };
 
   // Send to all connected deliverers via WebSocket
@@ -251,9 +282,137 @@ async function notifyNewOrder(order) {
   };
 }
 
+// Function to notify admins immediately (separate from deliverer notifications)
+async function notifyAdminsImmediate(order) {
+  console.log(`📢 [IMMEDIATE] Notifying admins about new order: ${order._id}`);
+  
+  const orderNotification = {
+    orderId: order._id,
+    orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+    client: {
+      name: `${order.client.firstName} ${order.client.lastName}`,
+      phone: order.client.phoneNumber,
+      location: order.client.location
+    },
+    provider: {
+      name: order.provider.name,
+      type: order.provider.type,
+      phone: order.provider.phone,
+      address: order.provider.address
+    },
+    items: order.items.map(item => ({
+      name: item.name,
+      quantity: item.quantity,
+      price: item.price
+    })),
+    total: order.totalAmount,
+    solde: order.platformSolde,
+    deliveryAddress: order.deliveryAddress,
+    paymentMethod: order.paymentMethod,
+    finalAmount: order.finalAmount,
+    createdAt: order.createdAt,
+    platformSolde: order.platformSolde,
+    distance: order.distance,
+    zone: order.zone,
+    status: order.status,
+    orderType: order.orderType,
+    isUrgent: order.isUrgent
+  };
+
+  // Send to all connected admins via WebSocket
+  io.emit("new-order-admin", orderNotification);
+  console.log(`📢 [IMMEDIATE] Sent WebSocket notification to ${activeAdmins.size} active admins`);
+  
+  return {
+    success: true,
+    notifiedAdmins: activeAdmins.size,
+    order: orderNotification
+  };
+}
+
 // Make functions available globally
 global.notifyNewOrder = notifyNewOrder;
+global.notifyAdminsImmediate = notifyAdminsImmediate;
 global.activeDeliverers = activeDeliverers;
+global.activeAdmins = activeAdmins;
+
+// Map to store auto-cancellation timers: orderId -> timeoutId
+global.orderCancellationTimers = new Map();
+
+// Function to schedule auto-cancellation for pending orders
+global.scheduleOrderAutoCancellation = function(orderId, delayMs = 600000) {
+  // Clear existing timer if any
+  if (global.orderCancellationTimers.has(orderId)) {
+    clearTimeout(global.orderCancellationTimers.get(orderId));
+  }
+  
+  const timerId = setTimeout(async () => {
+    try {
+      const Order = require('./models/Order');
+      const Cancellation = require('./models/Cancellation');
+      const order = await Order.findById(orderId);
+      
+      if (!order) {
+        console.log(`⚠️ Order ${orderId} not found for auto-cancellation`);
+        return;
+      }
+      
+      // Only cancel if still pending
+      if (order.status === 'pending') {
+        // Dedicated auto-cancel path that bypasses the 1-minute guard
+        const now = new Date();
+        order.status = 'cancelled';
+        order.cancellationType = 'ANNULER_1';
+        order.cancelledAt = now;
+        order.autoCancelledAt = now;
+        order.autoCancel = true;
+        order.cancellationReason = 'Auto-annulation: aucun livreur n\'a accepté dans les 10 minutes';
+        
+        await order.save();
+        
+        // Create cancellation record for audit trail
+        try {
+          const cancellation = new Cancellation({
+            orderId: order._id,
+            cancellationType: 'ANNULER_1',
+            cancelledBy: 'SYSTEM_AUTO_CANCEL',
+            reason: order.cancellationReason,
+            cancelledAt: now,
+            orderDetails: {
+              totalAmount: order.totalAmount,
+              platformSolde: order.platformSolde
+            }
+          });
+          await cancellation.save();
+          console.log(`📋 Cancellation record created for order ${orderId}`);
+        } catch (recordError) {
+          console.error(`⚠️ Failed to create cancellation record for order ${orderId}:`, recordError);
+        }
+        
+        console.log(`⏰ Order ${orderId} auto-cancelled after 10 minutes`);
+      }
+      
+      // Remove timer from map
+      global.orderCancellationTimers.delete(orderId);
+    } catch (error) {
+      console.error(`❌ Error auto-cancelling order ${orderId}:`, error);
+    }
+  }, delayMs);
+  
+  global.orderCancellationTimers.set(orderId, timerId);
+  console.log(`⏰ Auto-cancellation scheduled for order ${orderId} in ${delayMs/1000}s`);
+};
+
+// Function to cancel scheduled auto-cancellation
+global.cancelOrderAutoCancellation = function(orderId) {
+  if (global.orderCancellationTimers.has(orderId)) {
+    clearTimeout(global.orderCancellationTimers.get(orderId));
+    global.orderCancellationTimers.delete(orderId);
+    console.log(`✅ Auto-cancellation cancelled for order ${orderId}`);
+    return true;
+  }
+  return false;
+};
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -343,6 +502,16 @@ const PORT = process.env.PORT || 5000;
 process.on('SIGTERM', async () => {
   console.log('⏸️ SIGTERM signal received: closing HTTP server');
   stopGroupingScheduler();
+  
+  // Clear all pending auto-cancellation timers
+  if (global.orderCancellationTimers) {
+    for (const [orderId, timerId] of global.orderCancellationTimers.entries()) {
+      clearTimeout(timerId);
+    }
+    global.orderCancellationTimers.clear();
+    console.log('🧹 Cleared all auto-cancellation timers');
+  }
+  
   server.close(() => {
     console.log('❌ HTTP server closed');
     mongoose.connection.close(false, () => {
@@ -355,6 +524,16 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('⏸️ SIGINT signal received: closing HTTP server');
   stopGroupingScheduler();
+  
+  // Clear all pending auto-cancellation timers
+  if (global.orderCancellationTimers) {
+    for (const [orderId, timerId] of global.orderCancellationTimers.entries()) {
+      clearTimeout(timerId);
+    }
+    global.orderCancellationTimers.clear();
+    console.log('🧹 Cleared all auto-cancellation timers');
+  }
+  
   server.close(() => {
     console.log('❌ HTTP server closed');
     mongoose.connection.close(false, () => {

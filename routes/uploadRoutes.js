@@ -55,6 +55,27 @@ const uploadProvider = multer({
   }
 });
 
+// Configuration de multer pour les prescriptions
+const prescriptionStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, '..', 'uploads', 'prescription'));
+  },
+  filename: (req, file, cb) => {
+    // Générer un nom unique avec l'extension originale
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+// Configuration de multer pour prescriptions
+const uploadPrescription = multer({
+  storage: prescriptionStorage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB max for prescriptions
+  }
+});
+
 // Route pour uploader une image de produit
 router.post('/product', upload.single('image'), (req, res) => {
   try {
@@ -70,7 +91,8 @@ router.post('/product', upload.single('image'), (req, res) => {
     let imageUrl = relativePath;
     if (process.env.NODE_ENV === 'production') {
       // Force HTTPS in production using configured base URL or default domain
-      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://amigosdelivery25.com';
+      const baseUrl = 'https://amigosdelivery25.com';
+      //const baseUrl = 'http://192.168.1.104:5000';
       imageUrl = `${baseUrl}${relativePath}`;
     } else {
       // Development: construct from request
@@ -108,7 +130,8 @@ router.post('/provider', uploadProvider.single('image'), (req, res) => {
     let imageUrl = relativePath;
     if (process.env.NODE_ENV === 'production') {
       // Force HTTPS in production using configured base URL or default domain
-      const baseUrl = process.env.PUBLIC_BASE_URL || 'https://amigosdelivery25.com';
+      const baseUrl = 'https://amigosdelivery25.com';
+      //const baseUrl = 'http://192.168.1.104:5000';
       imageUrl = `${baseUrl}${relativePath}`;
     } else {
       // Development: construct from request
@@ -127,6 +150,47 @@ router.post('/provider', uploadProvider.single('image'), (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Erreur lors de l\'upload de l\'image'
+    });
+  }
+});
+
+// Route pour uploader une ordonnance
+router.post('/prescription', uploadPrescription.single('image'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Aucun fichier fourni' });
+    }
+
+    // Return relative path - client will prepend origin as needed
+    // This avoids tying absolute URLs to runtime protocol/host
+    const relativePath = `/uploads/prescription/${req.file.filename}`;
+
+    // For backward compatibility, also provide absolute URL with forced HTTPS in production
+    let imageUrl = relativePath;
+    if (process.env.NODE_ENV === 'production') {
+      // Force HTTPS in production using configured base URL or default domain
+      const baseUrl = 'https://amigosdelivery25.com';
+      //const baseUrl = 'http://192.168.1.104:5000';
+      imageUrl = `${baseUrl}${relativePath}`;
+    } else {
+      // Development: construct from request
+      const protocol = req.secure ? 'https' : 'http';
+      const host = req.get('host');
+      imageUrl = `${protocol}://${host}${relativePath}`;
+    }
+
+    res.json({
+      success: true,
+      imageUrl: imageUrl,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      message: 'Ordonnance uploadée avec succès'
+    });
+  } catch (error) {
+    console.error('Erreur lors de l\'upload:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de l\'upload de l\'ordonnance'
     });
   }
 });

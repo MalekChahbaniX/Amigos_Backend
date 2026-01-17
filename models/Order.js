@@ -104,6 +104,14 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  autoCancelledAt: {
+    type: Date,
+    default: null,
+  },
+  autoCancel: {
+    type: Boolean,
+    default: false,
+  },
   // PROVIDER PAYMENT: Payment method(s) for grouped orders
   // Can be string for single order or array for grouped orders
   providerPaymentMode: {
@@ -221,6 +229,19 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // PRESCRIPTION RELATED FIELDS
+  prescription: {
+    type: {
+      type: String,
+      enum: ['photo', 'text', 'none'],
+      default: 'none',
+    },
+    imageUrl: String, // URL of uploaded prescription image
+    textContent: String, // Manually entered prescription text
+    fileName: String, // Original filename
+    fileSize: Number, // Size in bytes
+    uploadedAt: Date, // Timestamp of prescription upload
+  },
   createdAt: {
     type: Date,
     default: Date.now,
@@ -233,6 +254,7 @@ orderSchema.index({ status: 1, orderType: 1, isGrouped: 1, scheduledFor: 1 });
 orderSchema.index({ provider: 1, zone: 1, scheduledFor: 1 });
 orderSchema.index({ status: 1, protectionEnd: 1 });
 orderSchema.index({ isUrgent: 1, protectionEnd: 1 });
+orderSchema.index({ 'prescription.type': 1 });
 
 
 module.exports = Order;

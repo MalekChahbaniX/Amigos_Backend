@@ -100,9 +100,14 @@ async function groupOrdersIntoA2(order1, order2) {
     const groupedOrders = [order1._id, order2._id];
     const soldeDual = balanceCalc.calculateSoldeDual([order1, order2]);
 
-    // Update both orders
-    await Order.updateMany(
-      { _id: { $in: groupedOrders } },
+    // Update both orders with atomic conditions to prevent concurrent changes
+    const updateResult = await Order.updateMany(
+      { 
+        _id: { $in: groupedOrders },
+        status: 'pending',
+        deliveryDriver: null,
+        isGrouped: false
+      },
       {
         isGrouped: true,
         groupedOrders: groupedOrders,
@@ -110,6 +115,13 @@ async function groupOrdersIntoA2(order1, order2) {
         soldeDual: soldeDual
       }
     );
+
+    // Verify that both orders were successfully updated
+    if (updateResult.modifiedCount !== groupedOrders.length) {
+      console.warn(`⚠️ A2 grouping mismatch: expected ${groupedOrders.length} updates, got ${updateResult.modifiedCount}`);
+      console.warn('⚠️ Skipping notifications and treating grouping as failed for retry');
+      return null;
+    }
 
     console.log(`✅ Grouped orders ${order1._id} + ${order2._id} into A2`);
     return { groupedOrders, solde: soldeDual, groupType: 'A2' };
@@ -145,9 +157,14 @@ async function groupOrdersIntoA3(order1, order2, order3) {
     const groupedOrders = [order1._id, order2._id, order3._id];
     const soldeTriple = balanceCalc.calculateSoldeTriple([order1, order2, order3]);
 
-    // Update all three orders
-    await Order.updateMany(
-      { _id: { $in: groupedOrders } },
+    // Update all three orders with atomic conditions to prevent concurrent changes
+    const updateResult = await Order.updateMany(
+      { 
+        _id: { $in: groupedOrders },
+        status: 'pending',
+        deliveryDriver: null,
+        isGrouped: false
+      },
       {
         isGrouped: true,
         groupedOrders: groupedOrders,
@@ -155,6 +172,13 @@ async function groupOrdersIntoA3(order1, order2, order3) {
         soldeTriple: soldeTriple
       }
     );
+
+    // Verify that all three orders were successfully updated
+    if (updateResult.modifiedCount !== groupedOrders.length) {
+      console.warn(`⚠️ A3 grouping mismatch: expected ${groupedOrders.length} updates, got ${updateResult.modifiedCount}`);
+      console.warn('⚠️ Skipping notifications and treating grouping as failed for retry');
+      return null;
+    }
 
     console.log(`✅ Grouped orders ${order1._id} + ${order2._id} + ${order3._id} into A3`);
     return { groupedOrders, solde: soldeTriple, groupType: 'A3' };

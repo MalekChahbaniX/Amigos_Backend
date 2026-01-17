@@ -12,7 +12,8 @@ const mongoose = require('mongoose');
 // Import Provider model
 const Provider = require('../models/Provider');
 
-const PRODUCTION_DOMAIN = process.env.PUBLIC_BASE_URL || 'https://amigosdelivery25.com';
+const PRODUCTION_DOMAIN = 'https://amigosdelivery25.com';
+//const PRODUCTION_DOMAIN = 'http://192.168.1.104:5000';
 
 async function migrateImagesToHttps() {
   try {

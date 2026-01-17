@@ -160,7 +160,8 @@ exports.createOrder = async (req, res) => {
     deliveryFee: clientProvidedDeliveryFee, // On le renomme pour éviter la confusion
     subtotal,
     cardInfo,
-    zoneId
+    zoneId,
+    prescription
   } = req.body;
 
   try {
@@ -178,6 +179,31 @@ exports.createOrder = async (req, res) => {
         message: 'Votre compte a été bloqué',
         blockedReason: clientData.blockedReason || 'Vous n\'êtes pas autorisé à passer de commandes'
       });
+    }
+
+    // 0. Validate prescription if provided
+    let validatedPrescription = null;
+    if (prescription) {
+      if (!['photo', 'text', 'none'].includes(prescription.type)) {
+        return res.status(400).json({ message: 'Invalid prescription type' });
+      }
+      
+      if (prescription.type === 'photo' && !prescription.imageUrl) {
+        return res.status(400).json({ message: 'Photo prescription requires imageUrl' });
+      }
+      
+      if (prescription.type === 'text' && !prescription.textContent) {
+        return res.status(400).json({ message: 'Text prescription requires textContent' });
+      }
+      
+      validatedPrescription = {
+        type: prescription.type,
+        imageUrl: prescription.imageUrl || undefined,
+        textContent: prescription.textContent || undefined,
+        fileName: prescription.fileName,
+        fileSize: prescription.fileSize,
+        uploadedAt: prescription.uploadedAt || new Date()
+      };
     }
 
     // 1. Charger provider
@@ -380,6 +406,7 @@ exports.createOrder = async (req, res) => {
       promo: appliedPromo ? appliedPromo._id : null,
       cardInfo: cardInfo || undefined,
       subtotal: subtotal || p2Total,
+      ...(validatedPrescription && { prescription: validatedPrescription }),
     };
 
     // Compute soldeSimple and soldeAmigos using balanceCalculator
@@ -397,10 +424,6 @@ exports.createOrder = async (req, res) => {
     const protectionEndTime = new Date(Date.now() + protectionDurationMs);
     orderData.protectionEnd = protectionEndTime;
 
-    // Prepare delay variables in outer scope to avoid ReferenceError
-    let delayMinutes = null;
-    let scheduledForTime = null;
-
     // Normalize urgent flag from possible client representations
     const urgentFlag = req.body.urgent === true || req.body.urgent === 'true' || req.body.urgent === 1 || req.body.urgent === '1';
     const isUrgent = req.body.orderType === 'A4' || urgentFlag;
@@ -414,46 +437,36 @@ exports.createOrder = async (req, res) => {
       orderData.canBeGrouped = false; // Explicitly mark as non-groupable
       console.log('🔥 Marking order as URGENT (A4) - bypassing processing delay and excluded from grouping');
     } else {
-      // Set processing delay (5-10 minutes) for grouping eligibility
-      delayMinutes = Math.floor(Math.random() * 6) + 5; // Random between 5-10
-      scheduledForTime = new Date(Date.now() + delayMinutes * 60 * 1000); // Add delay to current time
-      orderData.processingDelay = delayMinutes;
-      orderData.scheduledFor = scheduledForTime;
+      // Non-urgent orders: immediately available but eligible for grouping
+      orderData.orderType = 'A1';
+      orderData.processingDelay = 0;
+      orderData.scheduledFor = null;
       orderData.canBeGrouped = true;
-
-      console.log('💾 Creating order with processing delay of', delayMinutes, 'minutes, scheduled for', scheduledForTime.toISOString());
+      console.log('📦 Creating non-urgent order (A1) - immediately available and eligible for grouping');
     }
     const createdOrder = await Order.create(orderData);
 
-    // Notify deliverers about new order. Urgent orders are notified immediately.
+    // IMMEDIATE ADMIN NOTIFICATION - Always notify admins immediately regardless of order type
     try {
-      if (createdOrder.isUrgent) {
-        // Send immediate notification for urgent orders
-        try {
-          await global.notifyNewOrder(createdOrder);
-          console.log('📢 Immediate URGENT notification sent for order', createdOrder._id);
-        } catch (err) {
-          console.error('❌ Immediate URGENT notification failed for order', createdOrder._id, err);
-        }
-      } else {
-        const notifyDelayMs = Math.max(0, new Date(createdOrder.scheduledFor).getTime() - Date.now());
-        if (notifyDelayMs > 0) {
-          console.log(`⏳ Scheduling deliverer notification in ${Math.round(notifyDelayMs/1000)}s`);
-          setTimeout(async () => {
-            try {
-              await global.notifyNewOrder(createdOrder);
-              console.log('📢 Delayed notification sent for order', createdOrder._id);
-            } catch (err) {
-              console.error('❌ Delayed notification failed for order', createdOrder._id, err);
-            }
-          }, notifyDelayMs);
-        } else {
-          await global.notifyNewOrder(createdOrder);
-          console.log('📢 Notification sent for order', createdOrder._id);
-        }
+      if (global.notifyAdminsImmediate) {
+        await global.notifyAdminsImmediate(createdOrder);
+        console.log('📢 [IMMEDIATE] Admin notification sent for order', createdOrder._id);
       }
+    } catch (adminNotificationError) {
+      console.error('❌ Failed to send immediate admin notification:', adminNotificationError);
+    }
+
+    // Notify deliverers about new order immediately (both urgent and non-urgent)
+    try {
+      await global.notifyNewOrder(createdOrder);
+      console.log('📢 Immediate notification sent to deliverers for order', createdOrder._id);
     } catch (notificationError) {
-      console.error('❌ Failed to schedule/send notification:', notificationError);
+      console.error('❌ Failed to send deliverer notification:', notificationError);
+    }
+
+    // Schedule auto-cancellation after 10 minutes (600000ms)
+    if (global.scheduleOrderAutoCancellation) {
+      global.scheduleOrderAutoCancellation(createdOrder._id.toString(), 600000);
     }
 
     res.status(201).json({
@@ -562,6 +575,9 @@ exports.getAvailableOrders = async (req, res) => {
       createdAt: order.createdAt,
       platformSolde: order.platformSolde,
       urgent: !!order.isUrgent,
+      orderType: order.orderType || 'A1',
+      isGrouped: !!order.isGrouped,
+      groupSize: order.groupedOrders ? order.groupedOrders.length : 1,
     }));
     
     res.json(formattedOrders);
