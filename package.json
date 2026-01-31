@@ -6,7 +6,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon server.js",
     "migrate:images": "node scripts/migrateImagesToHttps.js",
-    "diagnose:images": "node scripts/diagnoseImageUrls.js"
+    "diagnose:images": "node scripts/diagnoseImageUrls.js",
+    "test:clictopay": "node scripts/testClickToPay.js",
+    "test:clictopay:verbose": "DEBUG=* node scripts/testClickToPay.js"
   },
   "author": "malek chahbani",
   "license": "ISC",

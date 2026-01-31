@@ -29,6 +29,16 @@ router.get('/orders', isDeliverer, checkDelivererSession, getDelivererOrders);
 router.get('/orders/available', isDeliverer, checkDelivererSession, getDelivererAvailableOrders);
 router.put('/orders/:orderId/accept', isDeliverer, checkDelivererSession, acceptOrder);
 router.put('/orders/:orderId/reject', isDeliverer, checkDelivererSession, rejectOrder);
+
+/**
+ * @route   PUT /api/deliverers/orders/:orderId/status
+ * @desc    Update order status with security code verification
+ * @access  Private (deliverer with active session)
+ * @body    {string} status - New status ('collected', 'in_delivery', 'delivered', 'cancelled')
+ * @body    {string} securityCode - 6-digit security code (required for 'collected' and 'delivered')
+ * @body    {string|array} providerPaymentMode - Payment mode (required for 'collected')
+ * @returns {object} Updated order information
+ */
 router.put('/orders/:orderId/status', isDeliverer, checkDelivererSession, updateOrderStatus);
 router.get('/earnings', isDeliverer, checkDelivererSession, getDelivererEarnings);
 router.get('/statistics', isDeliverer, checkDelivererSession, getDelivererStatistics);

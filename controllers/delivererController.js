@@ -4,6 +4,7 @@ const Session = require('../models/Session');
 const balanceCalc = require('../services/balanceCalculator');
 const delivererValidator = require('../services/delivererOrderValidation');
 const { protect, isDeliverer } = require('../middleware/auth');
+const { validateSecurityCode } = require('../utils/securityCodeGenerator');
 
 // @desc    Get orders assigned to a deliverer
 // @route   GET /api/deliverers/orders
@@ -391,14 +392,22 @@ exports.rejectOrder = async (req, res) => {
 // @access  Private (deliverer)
 exports.updateOrderStatus = async (req, res) => {
   const { orderId } = req.params;
-  const { status } = req.body;
+  const { status, securityCode } = req.body;
   const delivererId = req.user.id;
 
-  const validStatuses = ['in_delivery', 'delivered', 'cancelled'];
+  const validStatuses = ['collected', 'in_delivery', 'delivered', 'cancelled'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ 
       success: false,
       message: 'Statut invalide fourni' 
+    });
+  }
+
+  // Require security code for critical status transitions
+  if (['collected', 'delivered'].includes(status) && !securityCode) {
+    return res.status(400).json({
+      success: false,
+      message: 'Code de sécurité requis pour cette action'
     });
   }
 
@@ -435,6 +444,74 @@ exports.updateOrderStatus = async (req, res) => {
         message: `Transition de statut invalide: ${currentStatus} → ${status}` 
       });
     }
+
+    // ===== SECURITY CODE VERIFICATION FOR CRITICAL STATUS TRANSITIONS =====
+    if (['collected', 'delivered'].includes(status)) {
+      console.log(`🔐 [Order Status] Verifying security code for deliverer ${delivererId} on order ${orderId}`);
+      
+      const deliverer = await User.findById(delivererId);
+      if (!deliverer) {
+        return res.status(404).json({
+          success: false,
+          message: 'Livreur non trouvé'
+        });
+      }
+
+      // Handle legacy deliverers without security codes
+      if (!deliverer.securityCode) {
+        console.warn(`⚠️ [Security] Deliverer ${delivererId} missing security code. Auto-generating...`);
+        try {
+          await deliverer.save({ validateBeforeSave: false });
+          console.log(`🔐 [Security] Security code auto-generated for deliverer ${delivererId}`);
+        } catch (autoGenErr) {
+          console.error('Error auto-generating security code:', autoGenErr);
+          return res.status(500).json({
+            success: false,
+            message: 'Erreur lors de la génération du code de sécurité'
+          });
+        }
+      }
+
+      // Check if deliverer is locked due to failed attempts
+      if (deliverer.securityCodeLockedUntil && new Date() < new Date(deliverer.securityCodeLockedUntil)) {
+        const remainingMs = new Date(deliverer.securityCodeLockedUntil) - new Date();
+        const remainingMinutes = Math.ceil(remainingMs / 60000);
+        console.warn(`⚠️ [Security] Deliverer ${delivererId} locked until ${deliverer.securityCodeLockedUntil}`);
+        
+        return res.status(429).json({
+          success: false,
+          message: `Trop de tentatives. Réessayez dans ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}.`
+        });
+      }
+
+      // Validate provided security code against stored code
+      if (!validateSecurityCode(securityCode, deliverer.securityCode)) {
+        console.warn(`⚠️ [Security] Invalid security code for order ${orderId}. Current attempts: ${deliverer.failedSecurityCodeAttempts || 0}`);
+        
+        // Increment failed attempts
+        deliverer.failedSecurityCodeAttempts = (deliverer.failedSecurityCodeAttempts || 0) + 1;
+
+        // Lock account after 5 failed attempts
+        if (deliverer.failedSecurityCodeAttempts >= 5) {
+          deliverer.securityCodeLockedUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+          console.warn(`🔒 [Security] Deliverer ${delivererId} locked until ${deliverer.securityCodeLockedUntil}`);
+        }
+
+        await deliverer.save();
+
+        return res.status(401).json({
+          success: false,
+          message: 'Code de sécurité invalide'
+        });
+      }
+
+      // Security code is valid: reset failed attempts and unlock account
+      deliverer.failedSecurityCodeAttempts = 0;
+      deliverer.securityCodeLockedUntil = null;
+      await deliverer.save();
+      console.log(`✅ [Security] Security code validated for order ${orderId}`);
+    }
+    // ===== END SECURITY CODE VERIFICATION =====
 
     // HANDLE 'collected' STATUS: Manage provider payment confirmation
     if (status === 'collected') {

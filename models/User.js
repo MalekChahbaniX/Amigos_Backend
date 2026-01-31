@@ -79,6 +79,15 @@ const userSchema = new mongoose.Schema({
       return this.role === 'admin';
     }
   },
+  // Security code attempt tracking for rate limiting (deliverers only)
+  failedSecurityCodeAttempts: {
+    type: Number,
+    default: 0
+  },
+  securityCodeLockedUntil: {
+    type: Date,
+    default: null
+  },
   location: {
     latitude: Number,
     longitude: Number,
@@ -113,6 +122,17 @@ const userSchema = new mongoose.Schema({
   sessionActive: {
     type: Boolean,
     default: false
+  },
+  // Security code for deliverers (6-digit unique code)
+  securityCode: {
+    type: String,
+    required: function() {
+      return this.role === 'deliverer';
+    },
+    match: [/^\d{6}$/, 'Le code de sécurité doit être exactement 6 chiffres'],
+    unique: true,
+    sparse: true,
+    default: null
   },
   // Daily balance records for deliverers
   // Each entry: { date, orders: [orderId], soldeAmigos, soldeAnnulation, paid }
@@ -161,19 +181,56 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Middleware pour logger les modifications avant sauvegarde
-userSchema.pre('save', function(next) {
-  if (this.isModified('location')) {
-    console.log('💾 [User.pre-save] Sauvegarde de location pour user:', this._id);
-    console.log('💾 [User.pre-save] Nouvelles coordonnées:', {
-      latitude: this.location?.latitude,
-      longitude: this.location?.longitude,
-      address: this.location?.address,
-      city: this.location?.city,
-      postalCode: this.location?.postalCode
-    });
+// Middleware pour auto-générer securityCode pour les livreurs existants sans code de sécurité
+userSchema.pre('save', async function(next) {
+  try {
+    // Only auto-generate for deliverers
+    if (this.role === 'deliverer' && !this.securityCode) {
+      // Generate a simple 6-digit code
+      const { generateSecurityCode } = require('../utils/securityCodeGenerator');
+      
+      let securityCode = generateSecurityCode();
+      let attempts = 0;
+      const maxAttempts = 5;
+      
+      // Check for uniqueness
+      while (attempts < maxAttempts) {
+        const existingCode = await User.findOne({
+          securityCode: securityCode,
+          role: 'deliverer',
+          _id: { $ne: this._id } // Exclude current document
+        });
+        
+        if (!existingCode) {
+          this.securityCode = securityCode;
+          console.log(`🔐 [User.pre-save] Auto-generated security code for deliverer ${this._id}: ${securityCode}`);
+          break;
+        }
+        
+        securityCode = generateSecurityCode();
+        attempts++;
+      }
+      
+      if (attempts === maxAttempts && !this.securityCode) {
+        throw new Error('Impossible de générer un code de sécurité unique pour le livreur');
+      }
+    }
+    
+    if (this.isModified('location')) {
+      console.log('💾 [User.pre-save] Sauvegarde de location pour user:', this._id);
+      console.log('💾 [User.pre-save] Nouvelles coordonnées:', {
+        latitude: this.location?.latitude,
+        longitude: this.location?.longitude,
+        address: this.location?.address,
+        city: this.location?.city,
+        postalCode: this.location?.postalCode
+      });
+    }
+    next();
+  } catch (error) {
+    console.error('Erreur dans User.pre-save:', error.message);
+    next(error);
   }
-  next();
 });
 
 // Middleware pour logger les modifications avant findOneAndUpdate
@@ -196,6 +253,7 @@ userSchema.pre('findOneAndUpdate', function(next) {
 userSchema.index({ phoneNumber: 1 });
 userSchema.index({ isVerified: 1 });
 userSchema.index({ 'location.zone': 1 });
+userSchema.index({ securityCode: 1 });
 
 const User = mongoose.model('User', userSchema);
 

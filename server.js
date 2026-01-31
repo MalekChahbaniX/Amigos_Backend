@@ -123,11 +123,24 @@ const server = http.createServer(app);
 const { Server } = require('socket.io');
 const io = new Server(server, {
   cors: {
-    origin: 'https://amigosdelivery25.com',
-    //origin: 'http://192.168.1.104:5000',
-    methods: ["GET", "POST","PUT","DELETE","PATCH"],
-    credentials: true
-  }
+    origin: [
+      'https://amigosdelivery25.com',
+      'http://amigosdelivery25.com',
+      'http://localhost:5173',  // Dashboard dev
+      'http://localhost:3000',
+      'http://192.168.1.104:5173',  // Dashboard dev (IP locale)
+      'http://192.168.1.104:5000'
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    credentials: true,
+    allowEIO3: true  // Support pour Socket.IO v3
+  },
+  transports: ['websocket', 'polling'],  // Autoriser les deux transports
+  pingTimeout: 60000,  // 60 secondes
+  pingInterval: 25000,  // 25 secondes
+  upgradeTimeout: 30000,  // 30 secondes
+  maxHttpBufferSize: 1e8,  // 100 MB
+  allowUpgrades: true
 });
 
 // Store active deliverers with their push tokens
@@ -138,13 +151,34 @@ const activeAdmins = new Map();
 
 // Socket.IO connection handling
 io.on("connection", (socket) => {
-  console.log(`🔌 Deliverer connected: ${socket.id}`);
+  console.log(`🔌 New connection established`);
+  console.log(`   Socket ID: ${socket.id}`);
+  console.log(`   Transport: ${socket.conn.transport.name}`);
+  console.log(`   Remote Address: ${socket.handshake.address}`);
+  
+  // Log sanitized headers only in debug mode
+  if (process.env.DEBUG_WS_LOGS === 'true') {
+    console.log(`   User-Agent: ${socket.handshake.headers['user-agent'] || 'N/A'}`);
+    console.log(`   Origin: ${socket.handshake.headers.origin || 'N/A'}`);
+    console.log(`   Full Headers:`, socket.handshake.headers);
+    console.log(`   Query:`, socket.handshake.query);
+  } else {
+    // Production: only log non-sensitive info
+    console.log(`   User-Agent: ${socket.handshake.headers['user-agent'] || 'N/A'}`);
+    console.log(`   Origin: ${socket.handshake.headers.origin || 'N/A'}`);
+  }
+
+  // Logs de changement de transport
+  socket.conn.on('upgrade', (transport) => {
+    console.log(`🔄 Transport upgraded to: ${transport.name} for socket ${socket.id}`);
+  });
 
   // Join deliverer to a room
   socket.on("join-deliverer", (delivererId) => {
     socket.join(`deliverer-${delivererId}`);
     activeDeliverers.set(delivererId, socket.id);
-    console.log(`👤 Deliverer ${delivererId} joined room`);
+    console.log(`👤 Deliverer ${delivererId} joined room (Socket: ${socket.id})`);
+    console.log(`   Active deliverers: ${activeDeliverers.size}`);
     
     // Send online status
     socket.emit("status", {
@@ -159,7 +193,8 @@ io.on("connection", (socket) => {
     const { adminId } = data;
     socket.join(`admin-${adminId}`);
     activeAdmins.set(adminId, socket.id);
-    console.log(`👤 Admin ${adminId} joined room`);
+    console.log(`👤 Admin ${adminId} joined room (Socket: ${socket.id})`);
+    console.log(`   Active admins: ${activeAdmins.size}`);
     
     socket.emit("status", {
       status: "online",
@@ -195,14 +230,17 @@ io.on("connection", (socket) => {
   });
 
   // Handle disconnect
-  socket.on("disconnect", () => {
-    console.log(`🔌 Deliverer disconnected: ${socket.id}`);
+  socket.on("disconnect", (reason) => {
+    console.log(`🔌 Socket disconnected: ${socket.id}`);
+    console.log(`   Reason: ${reason}`);
+    console.log(`   Transport: ${socket.conn.transport.name}`);
     
     // Remove from active deliverers
     for (const [delivererId, socketId] of activeDeliverers.entries()) {
       if (socketId === socket.id) {
         activeDeliverers.delete(delivererId);
         console.log(`👤 Deliverer ${delivererId} removed from active list`);
+        console.log(`   Remaining active deliverers: ${activeDeliverers.size}`);
         break;
       }
     }
@@ -212,10 +250,24 @@ io.on("connection", (socket) => {
       if (socketId === socket.id) {
         activeAdmins.delete(adminId);
         console.log(`👤 Admin ${adminId} removed from active list`);
+        console.log(`   Remaining active admins: ${activeAdmins.size}`);
         break;
       }
     }
   });
+
+  // Log errors
+  socket.on('error', (error) => {
+    console.error(`❌ Socket error for ${socket.id}:`, error);
+  });
+});
+
+// Log global Socket.IO errors
+io.engine.on("connection_error", (err) => {
+  console.error('❌ Socket.IO connection error:');
+  console.error(`   Code: ${err.code}`);
+  console.error(`   Message: ${err.message}`);
+  console.error(`   Context:`, err.context);
 });
 
 // Function to notify all active deliverers about new order

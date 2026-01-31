@@ -34,6 +34,9 @@ const getZones = async (req, res) => {
         minDistance: zone.minDistance,
         maxDistance: zone.maxDistance,
         price: zone.price,
+        promoPrice: zone.promoPrice,
+        promoPercentage: zone.promoPercentage,
+        isPromoActive: zone.isPromoActive,
         createdAt: zone.createdAt,
         updatedAt: zone.updatedAt
       })),
@@ -66,6 +69,9 @@ const getZoneById = async (req, res) => {
       minDistance: zone.minDistance,
       maxDistance: zone.maxDistance,
       price: zone.price,
+      promoPrice: zone.promoPrice,
+      promoPercentage: zone.promoPercentage,
+      isPromoActive: zone.isPromoActive,
       createdAt: zone.createdAt,
       updatedAt: zone.updatedAt
     });
@@ -256,7 +262,12 @@ const getUserZone = async (req, res) => {
     res.json({
       zone: matchedZone.number,
       distance: distance.toFixed(3), // Use 3 decimal places for distance
-      price: matchedZone.price,
+      price: matchedZone.isPromoActive && matchedZone.promoPrice !== null 
+        ? matchedZone.promoPrice 
+        : matchedZone.price,
+      promoPrice: matchedZone.promoPrice,
+      promoPercentage: matchedZone.promoPercentage,
+      isPromoActive: matchedZone.isPromoActive
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -277,21 +288,31 @@ const updateZonePrice = async (req, res) => {
         return res.status(403).json({ message: 'Accès refusé: zone hors de votre ville' });
       }
     }
-    const zone = await Zone.findOneAndUpdate(
-      { number: zoneNumber },
-      { price: newPrice },
-      { new: true }
-    );
-
+    const zone = await Zone.findOne({ number: zoneNumber });
+    
     if (!zone) {
       return res.status(404).json({ message: "Zone non trouvée" });
     }
+    
+    // Update the price
+    zone.price = newPrice;
+    
+    // Recalculate promoPrice if promo is active
+    if (zone.isPromoActive && zone.promoPercentage !== undefined) {
+      zone.promoPrice = Number((zone.price * (1 + zone.promoPercentage / 100)).toFixed(3));
+    }
+    
+    // Save the updated zone
+    await zone.save();
 
     res.json({
       message: "Prix de la zone mis à jour avec succès",
       zone: {
         number: zone.number,
-        price: zone.price
+        price: zone.price,
+        promoPrice: zone.promoPrice,
+        promoPercentage: zone.promoPercentage,
+        isPromoActive: zone.isPromoActive
       }
     });
   } catch (err) {
@@ -682,6 +703,59 @@ const updateZoneGaranties = async (req, res) => {
   }
 };
 
+const applyGlobalPromo = async (req, res) => {
+  try {
+    const { percentage, isActive } = req.body;
+
+    // Validation
+    if (percentage === undefined || percentage === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le pourcentage est requis'
+      });
+    }
+
+    const percentageNum = Number(percentage);
+    if (isNaN(percentageNum)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le pourcentage doit être un nombre valide'
+      });
+    }
+
+    // Récupérer toutes les zones
+    const zones = await Zone.find({});
+
+    // Mettre à jour chaque zone
+    const updatePromises = zones.map(zone => {
+      zone.promoPercentage = percentageNum;
+      zone.promoPrice = Number((zone.price * (1 + percentageNum / 100)).toFixed(3));
+      zone.isPromoActive = isActive === true;
+      return zone.save();
+    });
+
+    await Promise.all(updatePromises);
+
+    console.log(`🎯 Global promo applied: ${percentageNum}% (${isActive ? 'ACTIVE' : 'INACTIVE'}) to ${zones.length} zones`);
+
+    res.json({
+      success: true,
+      message: `Tarif promo ${isActive ? 'activé' : 'désactivé'} avec succès`,
+      data: {
+        percentage: percentageNum,
+        isActive: isActive,
+        zonesUpdated: zones.length
+      }
+    });
+  } catch (err) {
+    console.error('Error applying global promo:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
 module.exports = {
   getUserZone,
   updateZonePrice,
@@ -699,7 +773,8 @@ module.exports = {
   getCitySettings,
   updateCityMultiplicateur,
   getZoneGaranties,
-  updateZoneGaranties
+  updateZoneGaranties,
+  applyGlobalPromo
 };
 
 

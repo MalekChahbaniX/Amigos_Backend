@@ -63,3 +63,66 @@ exports.getTransactionHistory = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// @desc    Get transaction status by ID
+// @route   GET /api/transactions/:transactionId/status
+// @access  Private (authenticated user)
+exports.getTransactionStatus = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+
+    // Validate transactionId format (MongoDB ObjectId)
+    if (!transactionId.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid transaction ID format'
+      });
+    }
+
+    // Find transaction by ID
+    const transaction = await Transaction.findById(transactionId);
+
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
+      });
+    }
+
+    // Guard against missing transaction.user before calling toString()
+    if (!transaction.user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found'
+      });
+    }
+
+    // Verify that the authenticated user owns this transaction
+    if (transaction.user.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied: You do not own this transaction'
+      });
+    }
+
+    // Return minimal transaction status data
+    res.json({
+      success: true,
+      data: {
+        transactionId: transaction._id,
+        status: transaction.status,
+        clickToPayOrderId: transaction.details?.clickToPayOrderId || null,
+        orderStatus: transaction.details?.orderStatus || null,
+        paymentGateway: transaction.paymentGateway,
+        amount: transaction.amount,
+        createdAt: transaction.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error in getTransactionStatus:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching transaction status'
+    });
+  }
+};

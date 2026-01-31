@@ -511,3 +511,160 @@ exports.logoutProvider = async (req, res) => {
     res.status(500).json({ message: 'Erreur serveur', error: error.message });
   }
 };
+
+// @desc    Get provider orders with filters
+// @route   GET /api/providers/me/orders
+// @access  Private (provider)
+exports.getProviderOrders = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const providerId = req.user._id || req.user.providerId;
+    const { status, page = 1, limit = 20 } = req.query;
+    
+    const query = { provider: providerId };
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    const skip = (page - 1) * limit;
+    const orders = await Order.find(query)
+      .populate('client', 'firstName lastName phoneNumber')
+      .populate('deliveryDriver', 'firstName lastName phoneNumber')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    const total = await Order.countDocuments(query);
+    
+    const formattedOrders = orders.map(order => ({
+      id: order._id,
+      orderNumber: order.orderNumber || `#${order._id.toString().slice(-6)}`,
+      client: order.client ? `${order.client.firstName} ${order.client.lastName}` : 'Client inconnu',
+      phone: order.client?.phoneNumber,
+      status: order.status,
+      totalAmount: order.totalAmount,
+      restaurantPayout: order.restaurantPayout,
+      items: order.items.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      })),
+      deliveryAddress: order.deliveryAddress,
+      deliveryDriver: order.deliveryDriver ? `${order.deliveryDriver.firstName} ${order.deliveryDriver.lastName}` : null,
+      createdAt: order.createdAt,
+      date: new Date(order.createdAt).toLocaleDateString('fr-FR')
+    }));
+    
+    res.json({
+      success: true,
+      orders: formattedOrders,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error in getProviderOrders:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Update order status to preparing (Réaliser)
+// @route   PUT /api/providers/me/orders/:orderId/status
+// @access  Private (provider)
+exports.updateProviderOrderStatus = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const providerId = req.user._id || req.user.providerId;
+    const { orderId } = req.params;
+    const { status } = req.body;
+    
+    // Validate status
+    if (!['preparing', 'cancelled'].includes(status)) {
+      return res.status(400).json({ 
+        message: 'Statut invalide. Utilisez "preparing" ou "cancelled"' 
+      });
+    }
+    
+    const order = await Order.findOne({ 
+      _id: orderId, 
+      provider: providerId 
+    });
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Commande non trouvée' });
+    }
+    
+    // Validate status transition
+    if (status === 'preparing' && order.status !== 'pending') {
+      return res.status(400).json({ 
+        message: 'Seules les commandes en attente peuvent être mises en préparation' 
+      });
+    }
+    
+    if (status === 'cancelled' && ['delivered', 'cancelled'].includes(order.status)) {
+      return res.status(400).json({ 
+        message: 'Cette commande ne peut plus être annulée' 
+      });
+    }
+    
+    order.status = status;
+    await order.save();
+    
+    // Emit WebSocket event for real-time updates
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('orderStatusUpdated', {
+        orderId: order._id,
+        status: order.status,
+        orderNumber: order.orderNumber || `#${order._id.toString().slice(-6)}`
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: status === 'preparing' ? 'Commande mise en préparation' : 'Commande annulée',
+      order: {
+        id: order._id,
+        status: order.status,
+        orderNumber: order.orderNumber || `#${order._id.toString().slice(-6)}`
+      }
+    });
+  } catch (error) {
+    console.error('Error in updateProviderOrderStatus:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Get provider order statistics
+// @route   GET /api/providers/me/orders/stats
+// @access  Private (provider)
+exports.getProviderOrderStats = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const providerId = req.user._id || req.user.providerId;
+    
+    const [pending, preparing, completed, cancelled] = await Promise.all([
+      Order.countDocuments({ provider: providerId, status: 'pending' }),
+      Order.countDocuments({ provider: providerId, status: 'preparing' }),
+      Order.countDocuments({ provider: providerId, status: 'delivered' }),
+      Order.countDocuments({ provider: providerId, status: 'cancelled' })
+    ]);
+    
+    res.json({
+      success: true,
+      stats: {
+        pending,
+        preparing,
+        completed,
+        cancelled,
+        total: pending + preparing + completed + cancelled
+      }
+    });
+  } catch (error) {
+    console.error('Error in getProviderOrderStats:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};

@@ -1,4 +1,5 @@
 const flouciAPI = require('../services/flouciAPI');
+const clickToPayAPI = require('../services/clickToPayAPI');
 const Transaction = require('../models/Transaction');
 const Order = require('../models/Order'); // Make sure you have this model
 const mongoose = require('mongoose');
@@ -127,6 +128,7 @@ exports.initiateFlouciPayment = async (req, res) => {
     const transaction = await Transaction.create({
       user: userId,
       type: 'paiement',
+      paymentGateway: 'flouci', // Explicitly set gateway
       amount: amount / 1000, // Store in DT, not millimes
       status: 'pending',
       paymentMethodType: paymentMethodType,
@@ -481,6 +483,548 @@ exports.handleFlouciFailure = async (req, res) => {
   } catch (error) {
     console.error('❌ Error in handleFlouciFailure:', error);
     const deepLinkUrl = 'myapp://payment-result?status=error&message=Redirect error';
+    console.log('🔗 Redirecting to deep link (error):', deepLinkUrl);
+    res.redirect(302, deepLinkUrl);
+  }
+};
+
+// Initiate ClickToPay payment
+exports.initiateClickToPayPayment = async (req, res) => {
+  try {
+    const { 
+      amount, 
+      userId, 
+      paymentMethodType = 'card', 
+      orderDetails,
+      currency = '788'  // Code ISO 4217 pour TND
+    } = req.body;
+
+    // Validation des paramètres requis
+    if (!amount || !userId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields: amount, userId' 
+      });
+    }
+
+    // Log de l'initiation
+    console.log('✅ ClickToPay credentials validated');
+    console.log('💳 ClickToPay payment initiation:', { 
+      paymentMethodType, 
+      amount,
+      currency,
+      cardMetadata: { 
+        brand: 'ClickToPay Gateway', 
+        last4: 'N/A' 
+      }
+    });
+
+    // Security logging
+    console.log('🔒 SECURITY LOG: ClickToPay hosted payment');
+    console.log('🔒 User ID:', userId);
+    console.log('🔒 Payment method: Gateway Hosted');
+    console.log('🔒 Card brand: ClickToPay Gateway');
+    console.log('🔒 Card last4: N/A');
+    console.log('🔒 Amount:', amount / 1000, 'DT');
+    console.log('🔒 Timestamp:', new Date().toISOString());
+    console.log('🔒 Request IP:', req.ip || 'unknown');
+
+    // Créer la transaction locale
+    console.log('💾 Creating local transaction...');
+    const transactionDetails = {
+      orderDetails,
+      amountInMillimes: amount,
+      paymentMethodType: paymentMethodType,
+      currency: currency
+    };
+
+    const transaction = await Transaction.create({
+      user: userId,
+      type: 'paiement',
+      paymentGateway: 'clictopay',
+      amount: amount / 1000, // Store in DT
+      status: 'pending',
+      paymentMethodType: paymentMethodType,
+      details: transactionDetails,
+    });
+    console.log('✅ Transaction created:', transaction._id);
+
+    // Générer l'orderId à partir de transaction._id
+    console.log('✅ Generating orderId from transaction._id');
+    const orderId = transaction._id.toString();
+    console.log('🆔 Final orderId:', orderId);
+    console.log('📏 OrderId length:', orderId.length, 'characters');
+    console.log('📌 OrderId source: generated (not provided)');
+
+    // Validation du format orderId
+    if (!orderId || orderId.length > 32) {
+      throw new Error(`Invalid orderId format: length ${orderId?.length || 0}`);
+    }
+    console.log('✅ OrderId format validated');
+
+    // ✅ CORRECTION CRITIQUE: Définir les URLs AVANT de les utiliser
+    const backendUrl = process.env.BACKEND_URL || 'http://192.168.1.104:5000';
+    const returnUrl = `${backendUrl}/api/payments/clictopay-success`;
+    const failUrl = `${backendUrl}/api/payments/clictopay-failure`;
+    
+    console.log('🔗 ClickToPay redirect URLs:', { returnUrl, failUrl });
+
+    // Appeler l'API ClickToPay
+    console.log('🔌 Calling ClickToPay API...');
+    let paymentData;
+    try {
+      const clickToPayAPI = require('../services/clickToPayAPI');
+      
+      paymentData = await clickToPayAPI.createPayment({
+        amount,
+        orderId,
+        returnUrl: returnUrl,  // ✅ Utiliser returnUrl (défini ci-dessus)
+        failUrl: failUrl,      // ✅ Utiliser failUrl (défini ci-dessus)
+        currency: currency,
+        language: 'fr',
+        description: orderDetails?.description || `Commande ${orderId.substring(0, 8)}`
+      });
+    } catch (clickToPayError) {
+      console.error('❌ ClickToPay API call failed:', clickToPayError.message);
+      
+      // Nettoyer la transaction en cas d'échec
+      transaction.status = 'failed';
+      transaction.details.errorMessage = clickToPayError.message;
+      transaction.markModified('details');
+      await transaction.save();
+
+      return res.status(502).json({
+        success: false,
+        message: 'Erreur lors de l\'initialisation du paiement ClickToPay',
+        error: {
+          type: 'CLICTOPAY_API_ERROR',
+          errorMessage: clickToPayError.message,
+          details: clickToPayError.response?.data || null
+        }
+      });
+    }
+
+    if (!paymentData || !paymentData.payment_url) {
+      console.error('❌ Invalid payment data from ClickToPay:', paymentData);
+      throw new Error('ClickToPay API returned invalid payment data');
+    }
+
+    console.log('💳 Payment data received from ClickToPay:', { 
+      payment_url: paymentData.payment_url,
+      id: paymentData.id 
+    });
+
+    // Mettre à jour la transaction avec les données ClickToPay
+    transaction.details.paymentUrl = paymentData.payment_url;
+    transaction.details.clickToPayOrderId = paymentData.id;
+    transaction.details.orderId = orderId;
+    transaction.markModified('details');
+    await transaction.save();
+    console.log('✅ Transaction updated with ClickToPay data');
+    console.log('🔍 Stored clickToPayOrderId:', paymentData.id);
+
+    // Préparer la réponse
+    const responseData = {
+      success: true,
+      paymentUrl: paymentData.payment_url,
+      transactionId: transaction._id,
+      clickToPayOrderId: paymentData.id,
+      paymentMethodType: paymentMethodType,
+    };
+    console.log('📤 Sending response to frontend:', responseData);
+    
+    res.status(201).json(responseData);
+  } catch (error) {
+    console.error('❌ Error in initiateClickToPayPayment:', error.message);
+    
+    let errorResponse = {
+      success: false,
+      message: 'Erreur lors de l\'initialisation du paiement',
+      error: {
+        type: 'UNKNOWN_ERROR',
+        statusCode: 500,
+        message: error.message,
+        details: null
+      }
+    };
+
+    // Déterminer le type d'erreur
+    if (error.message.includes('ClickToPay')) {
+      errorResponse.error.type = 'CLICTOPAY_API_ERROR';
+    } else if (error.message.includes('required') || error.message.includes('validation')) {
+      errorResponse.error.type = 'VALIDATION_ERROR';
+      errorResponse.error.statusCode = 400;
+    } else if (error.name === 'MongoError' || error.name === 'ValidationError') {
+      errorResponse.error.type = 'DATABASE_ERROR';
+    }
+
+    const statusCode = errorResponse.error.statusCode || 500;
+    res.status(statusCode).json(errorResponse);
+  }
+};
+
+// Handle ClickToPay payment success redirect
+exports.handleClickToPaySuccess = async (req, res) => {
+  const traceId = `TRACE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔍 REQUEST DETAILS:', traceId);
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('⏱️  Timestamp:', new Date().toISOString());
+  console.log('📌 Method:', req.method);
+  console.log('📌 URL:', req.originalUrl);
+  console.log('📌 IP:', req.ip || req.connection.remoteAddress);
+  console.log('📌 User-Agent:', req.headers['user-agent']);
+  console.log('📌 Referer:', req.headers['referer']);
+  console.log('📌 Query params:', JSON.stringify(req.query, null, 2));
+  console.log('═══════════════════════════════════════════════════════');
+  
+  console.log('🔗 ClickToPay success redirect received');
+  console.log('📋 Query parameters:', req.query);
+
+  try {
+    const { orderId } = req.query;
+
+    // Validate orderId
+    if (!orderId) {
+      console.warn('⚠️ Missing orderId in query parameters');
+      console.log('📌 All query params:', JSON.stringify(req.query, null, 2));
+      const deepLinkUrl = 'myapp://payment-result?status=error&message=Missing orderId';
+      
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔀 REDIRECT DETAILS:', traceId);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('⏱️  Timestamp:', new Date().toISOString());
+      console.log('📌 Status Code:', 302);
+      console.log('📌 Location:', deepLinkUrl);
+      console.log('📌 Response Headers:', {
+        'Location': deepLinkUrl,
+        'Content-Type': 'text/html'
+      });
+      console.log('═══════════════════════════════════════════════════════');
+      
+      console.log('🔗 Redirecting to deep link:', deepLinkUrl);
+      return res.redirect(302, deepLinkUrl);
+    }
+
+    console.log('🔍 Verifying payment status with ClickToPay API...');
+    
+    // Call ClickToPay API to verify the actual payment status
+    let verificationData;
+    try {
+      verificationData = await clickToPayAPI.verifyPayment(orderId);
+      console.log('✅ Verification response received:', JSON.stringify(verificationData, null, 2));
+    } catch (verifyError) {
+      console.error('❌ ClickToPay verification failed:', verifyError.message);
+      const deepLinkUrl = 'myapp://payment-result?status=error&message=Verification failed';
+      
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔀 REDIRECT DETAILS:', traceId);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('⏱️  Timestamp:', new Date().toISOString());
+      console.log('📌 Status Code:', 302);
+      console.log('📌 Location:', deepLinkUrl);
+      console.log('═══════════════════════════════════════════════════════');
+      
+      console.log('🔗 Redirecting to deep link (verification error):', deepLinkUrl);
+      return res.redirect(302, deepLinkUrl);
+    }
+
+    // Check if payment was actually authorized (orderStatus = 2)
+    if (verificationData.orderStatus !== 2) {
+      console.warn('⚠️ Payment not authorized. Order status:', verificationData.orderStatus);
+      const deepLinkUrl = `myapp://payment-result?status=failed&message=Payment not authorized&orderStatus=${verificationData.orderStatus}`;
+      
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔀 REDIRECT DETAILS:', traceId);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('⏱️  Timestamp:', new Date().toISOString());
+      console.log('📌 Status Code:', 302);
+      console.log('📌 Location:', deepLinkUrl);
+      console.log('═══════════════════════════════════════════════════════');
+      
+      console.log('🔗 Redirecting to deep link (not authorized):', deepLinkUrl);
+      return res.redirect(302, deepLinkUrl);
+    }
+
+    console.log('🔍 Searching for transaction with clickToPayOrderId:', orderId);
+    
+    // Find transaction by ClickToPay orderId
+    let transaction = await Transaction.findOne({
+      'details.clickToPayOrderId': orderId
+    });
+
+    // FALLBACK: Search by orderNumber if first search fails
+    if (!transaction && verificationData.orderNumber) {
+      console.log('⚠️ Transaction not found by clickToPayOrderId, trying orderNumber fallback');
+      console.log('🔍 Searching by orderNumber:', verificationData.orderNumber);
+      
+      transaction = await Transaction.findOne({
+        'details.orderId': verificationData.orderNumber
+      });
+      
+      if (transaction) {
+        console.log('✅ Transaction found via orderNumber fallback:', transaction._id);
+      }
+    }
+
+    if (!transaction) {
+      console.error('❌ Transaction not found by clickToPayOrderId OR orderNumber');
+      console.error('❌ Searched clickToPayOrderId:', orderId);
+      console.error('❌ Searched orderNumber:', verificationData.orderNumber);
+      
+      // Build URLSearchParams from all ClickToPay query parameters
+      const params = new URLSearchParams(req.query);
+      params.set('status', 'error');
+      params.set('message', 'Transaction not found');
+      const deepLinkUrl = `myapp://payment-result?${params.toString()}`;
+      
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔀 REDIRECT DETAILS:', traceId);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('⏱️  Timestamp:', new Date().toISOString());
+      console.log('📌 Status Code:', 302);
+      console.log('📌 Location:', deepLinkUrl);
+      console.log('═══════════════════════════════════════════════════════');
+      
+      console.log('🔗 Redirecting to deep link (transaction not found):', deepLinkUrl);
+      return res.redirect(302, deepLinkUrl);
+    }
+
+    console.log('✅ Transaction found:', transaction._id);
+    console.log('🔍 Order status from verification:', verificationData.orderStatus);
+    
+    // Update transaction status to success
+    transaction.status = 'success';
+    transaction.details.verificationData = verificationData;
+    transaction.details.orderStatus = verificationData.orderStatus;
+    transaction.details.authId = verificationData.cardAuthInfo?.authorizationResponseId;
+    
+    // CRITICAL: Mark 'details' as modified for Mongoose
+    transaction.markModified('details');
+    await transaction.save();
+    console.log('✅ Transaction updated:', {
+      _id: transaction._id,
+      status: transaction.status,
+      orderStatus: verificationData.orderStatus,
+      authId: verificationData.cardAuthInfo?.authorizationResponseId
+    });
+    
+    // CREATE ORDER if it doesn't exist already
+    const Order = require('../models/Order');
+    let order = await Order.findOne({ transactionId: transaction._id });
+
+    if (!order && transaction.details.orderDetails) {
+      console.log('📦 Creating order from transaction...');
+      
+      try {
+        const orderData = {
+          user: transaction.user,
+          transactionId: transaction._id,
+          items: transaction.details.orderDetails.items || [],
+          total: transaction.amount,
+          deliveryFee: transaction.details.orderDetails.deliveryFee || 0,
+          status: 'pending',
+          paymentMethod: 'clictopay',
+          paymentStatus: 'paid',
+          deliveryAddress: transaction.details.orderDetails.deliveryAddress,
+          provider: transaction.details.orderDetails.providerId,
+        };
+        
+        order = await Order.create(orderData);
+        console.log('✅ Order created:', order._id);
+      } catch (orderError) {
+        console.error('❌ Error creating order:', orderError.message);
+        // Don't block redirection if order creation fails
+      }
+    } else if (order) {
+      console.log('ℹ️ Order already exists:', order._id);
+    }
+    
+    // Build redirect parameters with authorization details
+    const params = new URLSearchParams();
+    params.set('status', 'success');
+    params.set('transactionId', transaction._id.toString());
+    params.set('gateway', 'clictopay');
+    params.set('orderStatus', verificationData.orderStatus.toString());
+    
+    // Add authorizationResponseId if available
+    if (verificationData.cardAuthInfo?.authorizationResponseId) {
+      params.set('authId', verificationData.cardAuthInfo.authorizationResponseId);
+    }
+    
+    // Add orderId if order was created or exists
+    if (order) {
+      params.set('orderId', order._id.toString());
+    }
+    
+    // Construct the deep link URL with success status and all ClickToPay parameters
+    const deepLinkUrl = `myapp://payment-result?${params.toString()}`;
+    
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔀 REDIRECT DETAILS:', traceId);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('⏱️  Timestamp:', new Date().toISOString());
+    console.log('📌 Status Code:', 302);
+    console.log('📌 Location:', deepLinkUrl);
+    console.log('📌 Response Headers:', {
+      'Location': deepLinkUrl,
+      'Content-Type': 'text/html'
+    });
+    console.log('📋 Deep link params:', {
+      status: 'success',
+      transactionId: transaction._id.toString(),
+      gateway: 'clictopay',
+      orderStatus: verificationData.orderStatus,
+      authId: verificationData.cardAuthInfo?.authorizationResponseId,
+      orderId: order?._id.toString()
+    });
+    console.log('═══════════════════════════════════════════════════════');
+    
+    console.log('🔗 Redirecting to deep link (success):', deepLinkUrl);
+    res.redirect(302, deepLinkUrl);
+  } catch (error) {
+    console.error('❌ Error in handleClickToPaySuccess:', error);
+    const deepLinkUrl = 'myapp://payment-result?status=error&message=Database error';
+    
+    const traceIdError = `TRACE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔀 REDIRECT DETAILS:', traceIdError);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('⏱️  Timestamp:', new Date().toISOString());
+    console.log('📌 Status Code:', 302);
+    console.log('📌 Location:', deepLinkUrl);
+    console.log('═══════════════════════════════════════════════════════');
+    
+    console.log('🔗 Redirecting to deep link (error):', deepLinkUrl);
+    res.redirect(302, deepLinkUrl);
+  }
+};
+
+// Handle ClickToPay payment failure redirect
+exports.handleClickToPayFailure = async (req, res) => {
+  const traceId = `TRACE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('🔍 REQUEST DETAILS:', traceId);
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('⏱️  Timestamp:', new Date().toISOString());
+  console.log('📌 Method:', req.method);
+  console.log('📌 URL:', req.originalUrl);
+  console.log('📌 IP:', req.ip || req.connection.remoteAddress);
+  console.log('📌 User-Agent:', req.headers['user-agent']);
+  console.log('📌 Referer:', req.headers['referer']);
+  console.log('📌 Query params:', JSON.stringify(req.query, null, 2));
+  console.log('═══════════════════════════════════════════════════════');
+  
+  console.log('🔗 ClickToPay failure redirect received');
+  console.log('📋 Query parameters:', req.query);
+
+  try {
+    const { orderId } = req.query;
+
+    if (orderId) {
+      console.log('📌 Payment redirect for orderId:', orderId);
+      
+      // Try to get detailed information from ClickToPay API
+      try {
+        const verificationData = await clickToPayAPI.verifyPayment(orderId);
+        console.log('🔍 Verification details from ClickToPay:', JSON.stringify(verificationData, null, 2));
+        
+        // Search for and update transaction
+        let transaction = await Transaction.findOne({
+          'details.clickToPayOrderId': orderId
+        });
+        
+        // FALLBACK: Search by orderNumber
+        if (!transaction && verificationData.orderNumber) {
+          console.log('⚠️ Transaction not found by clickToPayOrderId, trying orderNumber fallback');
+          transaction = await Transaction.findOne({
+            'details.orderId': verificationData.orderNumber
+          });
+          if (transaction) {
+            console.log('✅ Transaction found via orderNumber fallback:', transaction._id);
+          }
+        }
+        
+        if (transaction) {
+          // Determine status based on orderStatus
+          // orderStatus = 2 means success/authorized
+          if (verificationData.orderStatus === 2) {
+            console.log('✅ Payment actually succeeded (orderStatus = 2), marking transaction as success');
+            transaction.status = 'success';
+          } else {
+            console.log('❌ Payment failed (orderStatus =', verificationData.orderStatus + ')');
+            transaction.status = 'failed';
+          }
+          transaction.details.orderStatus = verificationData.orderStatus;
+          transaction.details.verificationData = verificationData;
+          transaction.details.authId = verificationData.cardAuthInfo?.authorizationResponseId;
+          
+          // CRITICAL: Mark details as modified
+          transaction.markModified('details');
+          await transaction.save();
+          console.log('✅ Transaction updated with status:', transaction.status);
+        } else {
+          console.warn('⚠️ Transaction not found for orderId:', orderId);
+        }
+      } catch (verifyError) {
+        console.error('⚠️ Could not verify payment details:', verifyError.message);
+      }
+    } else {
+      console.warn('⚠️ No orderId provided in failure redirect');
+      console.log('📌 All query params:', JSON.stringify(req.query, null, 2));
+    }
+
+    // Build URLSearchParams from all ClickToPay query parameters
+    const params = new URLSearchParams(req.query);
+    
+    // Check if we have verification data to determine actual status
+    let finalStatus = 'failed'; // Default to failed
+    if (orderId) {
+      try {
+        const verificationData = await clickToPayAPI.verifyPayment(orderId);
+        if (verificationData.orderStatus === 2) {
+          finalStatus = 'success';
+          params.set('orderStatus', verificationData.orderStatus);
+        }
+      } catch (e) {
+        // If we can't verify, keep default failed status
+      }
+    }
+    
+    params.set('status', finalStatus);
+    
+    // Construct the deep link URL with appropriate status and all ClickToPay parameters
+    const deepLinkUrl = `myapp://payment-result?${params.toString()}`;
+    
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔀 REDIRECT DETAILS:', traceId);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('⏱️  Timestamp:', new Date().toISOString());
+    console.log('📌 Status Code:', 302);
+    console.log('📌 Location:', deepLinkUrl);
+    console.log('📌 Response Headers:', {
+      'Location': deepLinkUrl,
+      'Content-Type': 'text/html'
+    });
+    console.log('═══════════════════════════════════════════════════════');
+    
+    console.log('🔗 Redirecting to deep link:', deepLinkUrl);
+    res.redirect(302, deepLinkUrl);
+  } catch (error) {
+    console.error('❌ Error in handleClickToPayFailure:', error);
+    const deepLinkUrl = 'myapp://payment-result?status=error&message=Redirect error';
+    
+    const traceIdError = `TRACE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('🔀 REDIRECT DETAILS:', traceIdError);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('⏱️  Timestamp:', new Date().toISOString());
+    console.log('📌 Status Code:', 302);
+    console.log('📌 Location:', deepLinkUrl);
+    console.log('═══════════════════════════════════════════════════════');
+    
     console.log('🔗 Redirecting to deep link (error):', deepLinkUrl);
     res.redirect(302, deepLinkUrl);
   }

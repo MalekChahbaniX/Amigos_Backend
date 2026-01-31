@@ -55,9 +55,11 @@ exports.calculateOrderFees = async (req, res) => {
       });
 
       if (zone) {
-        calculatedDeliveryFee = zone.price;
+        calculatedDeliveryFee = zone.isPromoActive && zone.promoPrice !== null 
+          ? zone.promoPrice 
+          : zone.price;
         matchedZoneId = zone._id;
-        console.log(`📍 Zone matched: ${zone.number}, fee: ${zone.price} TND`);
+        console.log(`📍 Zone matched: ${zone.number}, fee: ${calculatedDeliveryFee} TND ${zone.isPromoActive ? '(PROMO)' : ''}`);
       } else {
         console.log('⚠️ No zone matched for distance:', calculatedDistance);
       }
@@ -138,13 +140,14 @@ exports.calculateOrderFees = async (req, res) => {
   }
 };
 
-// @desc    Create a new order with complete pricing logic
+// @desc    Create a new order with complete pricing logic (multi-provider support)
 // @route   POST /api/orders
 // @access  Private (client)
 exports.createOrder = async (req, res) => {
   console.log('📥 Incoming order request:', {
     client: req.body.client,
     provider: req.body.provider,
+    providers: req.body.providers,
     paymentMethod: req.body.paymentMethod,
     totalAmount: req.body.totalAmount,
     itemsCount: req.body.items?.length || 0,
@@ -153,6 +156,7 @@ exports.createOrder = async (req, res) => {
   const {
     client,
     provider,
+    providers: providersArray,
     items,
     deliveryAddress, // Doit contenir { latitude, longitude }
     paymentMethod,
@@ -163,8 +167,22 @@ exports.createOrder = async (req, res) => {
     zoneId,
     prescription
   } = req.body;
+  
+  // Support both legacy provider and new providers array
+  const providersToProcess = providersArray && Array.isArray(providersArray) && providersArray.length > 0 
+    ? providersArray 
+    : (provider ? [provider] : []);
 
   try {
+    // Validate providers
+    if (providersToProcess.length < 1 || providersToProcess.length > 2) {
+      console.log('❌ Invalid providers count:', providersToProcess.length);
+      return res.status(400).json({ 
+        message: 'Une commande doit contenir entre 1 et 2 prestataires',
+        providersCount: providersToProcess.length 
+      });
+    }
+
     // CHECK CLIENT BLOCKING STATUS
     const clientData = await User.findById(client);
     if (!clientData) {
@@ -206,147 +224,190 @@ exports.createOrder = async (req, res) => {
       };
     }
 
-    // 1. Charger provider
-    console.log('🔍 Fetching provider:', provider);
-    const providerData = await Provider.findById(provider);
+    // COMMENT 2-3: Multi-Provider Support - Group items by providerId and calculate per-provider fees
+    // ========================================================================================
 
-    if (!providerData) {
-      console.log('❌ Provider not found:', provider);
-      return res.status(404).json({ message: 'Provider not found' });
+    // 1. Charger les providers (plural support)
+    console.log('🔍 Fetching providers:', providersToProcess);
+    const providersData = await Provider.find({ _id: { $in: providersToProcess } });
+
+    if (providersData.length === 0) {
+      console.log('❌ No providers found');
+      return res.status(404).json({ message: 'Aucun prestataire trouvé' });
     }
 
-    // --- LOGIQUE DE CALCUL DE DISTANCE ET ZONE ---
-    let calculatedDeliveryFee = 0;
-    let calculatedDistance = 0;
-    let matchedZoneId = zoneId; // Si déjà fourni
+    const providerMap = new Map(providersData.map(p => [p._id.toString(), p]));
 
-    // Vérifier si on a les coordonnées pour calculer
-    if (
+    // 2. Charger les produits
+    console.log('🛒 Loading products for pricing...');
+    const productIds = items.map(item => item.product || item.productId).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } });
+    const productMap = new Map(products.map(p => [p._id.toString(), p]));
+
+    // 3. Group items by providerId (COMMENT 2)
+    console.log('🔀 Grouping items by providerId...');
+    const itemsByProvider = {};
+    providersToProcess.forEach(pid => {
+      itemsByProvider[pid.toString()] = [];
+    });
+
+    for (const item of items) {
+      const providerId = item.providerId?.toString();
+      if (!providerId || !itemsByProvider[providerId]) {
+        console.warn('⚠️ Item has no valid providerId:', item);
+        continue;
+      }
+      itemsByProvider[providerId].push(item);
+    }
+
+    // 4. Process each provider separately for fees calculation
+    console.log('💰 Calculating fees per provider...');
+    let p1Total = 0;
+    let p2Total = 0;
+    let totalDeliveryFee = 0;
+    let totalAppFee = 0;
+    const providerFees = []; // Array to store per-provider fee breakdown
+    const formattedItems = [];
+    const deliveryCategories = new Set();
+
+    const appSetting = await AppSetting.findOne();
+    console.log('📊 AppSetting from DB:', appSetting);
+
+    // For each provider, calculate delivery fee and app fee
+    for (const providerId of providersToProcess) {
+      const providerIdStr = providerId.toString();
+      const providerData = providerMap.get(providerIdStr);
+      const providerItems = itemsByProvider[providerIdStr] || [];
+
+      if (!providerData || providerItems.length === 0) {
+        continue;
+      }
+
+      console.log(`\n📦 Processing Provider ${providerIdStr}:`);
+
+      // --- Distance & Zone Calculation per Provider ---
+      let calculatedDeliveryFee = 0;
+      let calculatedDistance = 0;
+      let matchedZoneId = null;
+
+      if (
         providerData.location && 
         providerData.location.latitude && 
         providerData.location.longitude &&
         deliveryAddress && 
         deliveryAddress.latitude && 
         deliveryAddress.longitude
-    ) {
+      ) {
         console.log('📏 Calculating precise distance server-side...');
         
         calculatedDistance = calculateDistance(
-            providerData.location.latitude,
-            providerData.location.longitude,
-            deliveryAddress.latitude,
-            deliveryAddress.longitude
+          providerData.location.latitude,
+          providerData.location.longitude,
+          deliveryAddress.latitude,
+          deliveryAddress.longitude
         );
 
         console.log(`📏 Distance calculated: ${calculatedDistance.toFixed(3)} km`);
 
-        // Trouver la zone correspondante
         const zone = await Zone.findOne({
-            minDistance: { $lte: calculatedDistance },
-            maxDistance: { $gt: calculatedDistance } // Strictement supérieur
+          minDistance: { $lte: calculatedDistance },
+          maxDistance: { $gt: calculatedDistance }
         });
 
         if (zone) {
-            calculatedDeliveryFee = zone.price;
-            matchedZoneId = zone._id;
-            console.log(`📍 Matched Zone ${zone.number}: price = ${zone.price} TND`);
+          calculatedDeliveryFee = zone.isPromoActive && zone.promoPrice !== null 
+            ? zone.promoPrice 
+            : zone.price;
+          matchedZoneId = zone._id;
+          console.log(`📍 Provider ${providerIdStr} - Zone matched: ${zone.number}, fee: ${calculatedDeliveryFee} TND ${zone.isPromoActive ? '(PROMO)' : ''}`);
         } else {
-            console.log('⚠️ No zone matched for this distance');
-            // Optionnel : Rejeter la commande si hors zone
-            // return res.status(400).json({ message: "Adresse hors zone de livraison" });
-            
-            // Ou fallback sur une valeur par défaut / valeur envoyée par le client
-            calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
+          console.log('⚠️ No zone matched for this distance');
+          calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
         }
-    } else {
-        console.log('⚠️ Missing GPS coordinates for calculation. Using provided deliveryFee or 0.');
-        // Fallback si pas de coordonnées (ex: anciennes adresses)
-        calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
-    }
-    // ---------------------------------------------
-
-    // 2. Charger les produits
-    console.log('🛒 Loading products for pricing...');
-    const productIds = items.map(item => item.product).filter(Boolean);
-    const products = await Product.find({ _id: { $in: productIds } });
-    const productMap = new Map(products.map(p => [p._id.toString(), p]));
-
-    // 3. Calculer les totaux P1, P2 et vérifier les catégories
-    console.log('💰 Calculating pricing with commissions...');
-    let p1Total = 0;
-    let p2Total = 0;
-    let hasRestaurant = false;
-    let hasCourse = false;
-    let hasPharmacy = false;
-    let hasStore = false;
-    const formattedItems = [];
-
-    for (const item of items) {
-      const product = productMap.get(item.product?.toString() || item.productId?.toString());
-      let P1, P2, deliveryCategory;
-
-      if (product) {
-        P1 = product.p1;
-        P2 = product.p2;
-        deliveryCategory = product.deliveryCategory;
-
-        if (deliveryCategory === 'restaurant') hasRestaurant = true;
-        if (deliveryCategory === 'course') hasCourse = true;
-        if (deliveryCategory === 'pharmacy') hasPharmacy = true;
-        if (deliveryCategory === 'store') hasStore = true;
       } else {
-        const P = item.price || 0;
-        const csR = (providerData.csRPercent || 5) / 100;
-        const csC = (providerData.csCPercent || 0) / 100;
-        P1 = P * (1 - csR);
-        P2 = P * (1 + csC);
-        deliveryCategory = providerData.type;
+        console.log('⚠️ Missing GPS coordinates for calculation. Using provided deliveryFee or 0.');
+        calculatedDeliveryFee = clientProvidedDeliveryFee || 0;
       }
 
-      const qty = item.quantity || 1;
-      p1Total += P1 * qty;
-      p2Total += P2 * qty;
+      // --- App Fee per Provider ---
+      let providerAppFee = 0;
+      let providerDeliveryCategory = providerData.type || 'restaurant';
 
-      formattedItems.push({
-        product: item.product || item.productId || null,
-        name: item.name,
-        price: item.price,
-        quantity: qty,
-        p1: P1,
-        p2: P2,
-        deliveryCategory: deliveryCategory,
+      if (appSetting && appSetting.appFee !== undefined) {
+        providerAppFee = appSetting.appFee;
+        console.log(`✅ Using appFee from DB: ${providerAppFee} TND`);
+      } else {
+        providerAppFee = (providerDeliveryCategory === 'restaurant' ? 0 : 1.5);
+        console.log(`⚠️ No AppSetting in DB, using default: ${providerAppFee} TND`);
+      }
+
+      // --- Process items for this provider ---
+      let providerP1 = 0;
+      let providerP2 = 0;
+
+      for (const item of providerItems) {
+        const product = productMap.get(item.product?.toString() || item.productId?.toString());
+        let P1, P2, deliveryCategory;
+
+        if (product) {
+          P1 = product.p1;
+          P2 = product.p2;
+          deliveryCategory = product.deliveryCategory;
+        } else {
+          const P = item.price || 0;
+          const csR = (providerData.csRPercent || 5) / 100;
+          const csC = (providerData.csCPercent || 0) / 100;
+          P1 = P * (1 - csR);
+          P2 = P * (1 + csC);
+          deliveryCategory = providerData.type;
+        }
+
+        const qty = item.quantity || 1;
+        providerP1 += P1 * qty;
+        providerP2 += P2 * qty;
+        p1Total += P1 * qty;
+        p2Total += P2 * qty;
+        deliveryCategories.add(deliveryCategory);
+
+        // COMMENT 3: Include providerId in formattedItems
+        formattedItems.push({
+          product: item.product || item.productId || null,
+          name: item.name,
+          price: item.price,
+          quantity: qty,
+          p1: P1,
+          p2: P2,
+          deliveryCategory: deliveryCategory,
+          providerId: providerId, // ← COMMENT 3: Add providerId to match Order schema
+        });
+      }
+
+      // Store per-provider fees
+      totalDeliveryFee += calculatedDeliveryFee;
+      totalAppFee += providerAppFee;
+
+      providerFees.push({
+        providerId: providerId,
+        deliveryFee: calculatedDeliveryFee,
+        appFee: providerAppFee,
+        p1: providerP1,
+        p2: providerP2,
       });
+
+      console.log(`✅ Provider summary: P1=${providerP1}, P2=${providerP2}, DeliveryFee=${calculatedDeliveryFee}, AppFee=${providerAppFee}`);
     }
 
-    // 4. Déterminer la catégorie de livraison
-    let deliveryCategory = 'restaurant';
-    if (hasCourse) deliveryCategory = 'course';
-    else if (hasPharmacy) deliveryCategory = 'pharmacy';
-    else if (hasStore) deliveryCategory = 'store';
+    // 5. Determine delivery category based on all items
+    let finalDeliveryCategory = 'restaurant';
+    if (deliveryCategories.has('course')) finalDeliveryCategory = 'course';
+    else if (deliveryCategories.has('pharmacy')) finalDeliveryCategory = 'pharmacy';
+    else if (deliveryCategories.has('store')) finalDeliveryCategory = 'store';
 
-    // 5. Utiliser les frais calculés
-    const finalDeliveryFee = calculatedDeliveryFee;
+    // 6. Calculate final amount (COMMENT 7: Use summed per-provider fees, don't overwrite)
+    const finalAmount = p2Total + totalDeliveryFee + totalAppFee;
+    console.log(`💰 Final amount details: Products(${p2Total}) + Delivery(${totalDeliveryFee}) + AppFee(${totalAppFee}) = ${finalAmount}`);
 
-    // 6. Charger les frais application
-    console.log('💳 Loading app fees from database...');
-    const appSetting = await AppSetting.findOne();
-    console.log('📊 AppSetting from DB:', appSetting);
-    
-    let appFee = 0;
-    if (appSetting && appSetting.appFee !== undefined) {
-      appFee = appSetting.appFee;
-      console.log(`✅ Using appFee from DB: ${appFee} TND`);
-    } else {
-      // Fallback to defaults if no setting exists
-      appFee = (deliveryCategory === 'restaurant' ? 0 : 1.5);
-      console.log(`⚠️ No AppSetting in DB, using default: ${appFee} TND for category ${deliveryCategory}`);
-    }
-
-    // 7. Calculer le montant final
-    const finalAmount = p2Total + finalDeliveryFee + appFee;
-    console.log(`💰 Final amount details: Products(${p2Total}) + Delivery(${finalDeliveryFee}) + AppFee(${appFee}) = ${finalAmount}`);
-
-    // 8. Vérifier promo
+    // 7. Check for promo
     console.log('🎁 Checking for active promo...');
     const promo = await Promo.findOne({ status: 'active' });
     let appliedPromo = null;
@@ -354,7 +415,7 @@ exports.createOrder = async (req, res) => {
 
     if (
       promo &&
-      promo.targetServices.includes(deliveryCategory) &&
+      promo.targetServices.includes(finalDeliveryCategory) &&
       promo.ordersUsed < promo.maxOrders &&
       finalAmount <= promo.maxAmount
     ) {
@@ -368,28 +429,27 @@ exports.createOrder = async (req, res) => {
 
     const totalAmountAfterPromo = Math.max(0, finalAmount - promoDiscount);
 
-    // 10. Valider le montant total (Tolérance de 0.1 pour les arrondis)
+    // 8. Validate total amount (tolerance of 0.1 for rounding)
     if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.1) {
       console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${totalAmountAfterPromo}`);
-      // Optionnel : Rejeter ou Forcer le montant calculé (ici on log juste pour debug, mais en prod il vaut mieux rejeter ou corriger)
-      // return res.status(400).json({ ... });
     }
 
-    // 11. Calculer le solde plateforme
-    const platformSolde = (p2Total - p1Total) + finalDeliveryFee + appFee - promoDiscount;
+    // 9. Calculate platform solde
+    const platformSolde = (p2Total - p1Total) + totalDeliveryFee + totalAppFee - promoDiscount;
 
-    // 12. Créer la commande
+    // 10. Create order with multi-provider support
     const orderData = {
       client,
-      provider,
+      providers: providersToProcess, // COMMENT 2: Multiple providers
       items: formattedItems,
+      providerFees: providerFees, // COMMENT 2: Per-provider fee breakdown
       deliveryAddress,
       paymentMethod: paymentMethod === 'card' ? 'online' : paymentMethod,
-      totalAmount: totalAmountAfterPromo, // On utilise le montant calculé par sécurité
+      totalAmount: totalAmountAfterPromo,
       clientProductsPrice: p2Total,
       restaurantPayout: p1Total,
-      deliveryFee: finalDeliveryFee,
-      appFee,
+      deliveryFee: totalDeliveryFee,
+      appFee: totalAppFee, // COMMENT 7: Use summed per-provider appFees
       platformSolde,
       p1Total,
       p2Total,
@@ -400,8 +460,7 @@ exports.createOrder = async (req, res) => {
       soldeAmigos: 0,
       finalAmount: totalAmountAfterPromo,
       status: 'pending',
-      zone: matchedZoneId || null,
-      distance: calculatedDistance || null,
+      distance: null, // Multi-provider may have different distances
       appliedPromo: appliedPromo ? appliedPromo._id : null,
       promo: appliedPromo ? appliedPromo._id : null,
       cardInfo: cardInfo || undefined,

@@ -33,6 +33,18 @@ const zoneSchema = new mongoose.Schema({
     required: [true, 'Le prix est obligatoire'],
     min: [0, 'Le prix ne peut pas être négatif']
   },
+  promoPrice: {
+    type: Number,
+    default: null
+  },
+  promoPercentage: {
+    type: Number,
+    default: 0
+  },
+  isPromoActive: {
+    type: Boolean,
+    default: false
+  },
   minGarantieA1: {
     type: Number,
     default: 0,

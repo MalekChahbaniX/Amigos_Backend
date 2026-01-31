@@ -5,11 +5,69 @@ const Session = require('../models/Session');
 const OTPLog = require('../models/OTPLog');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const OTPService = require('../services/otpService');
+const SMSRouterService = require('../services/smsRouterService');
+const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
 
-// Fonction pour mapper les erreurs Twilio en messages utilisateur
+// Fonction pour mapper les erreurs SMS (Twilio et WinSMS) en messages utilisateur
 const getOTPErrorMessage = (error) => {
-    const errorMap = {
+    const provider = error.provider || 'unknown';
+    const errorMessage = error.message || '';
+    
+    // Erreurs WinSMS spécifiques
+    if (provider === 'winsms') {
+        const winSmsErrorMap = {
+            'invalid number': {
+                message: 'Le numéro de téléphone fourni est invalide',
+                statusCode: 400,
+                canRetry: false
+            },
+            'invalid phone': {
+                message: 'Le numéro de téléphone fourni est invalide',
+                statusCode: 400,
+                canRetry: false
+            },
+            'authentication': {
+                message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+                statusCode: 503,
+                canRetry: true
+            },
+            'unauthorized': {
+                message: 'Service d\'envoi SMS non configuré. Contactez l\'administrateur.',
+                statusCode: 503,
+                canRetry: false
+            },
+            'insufficient balance': {
+                message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+                statusCode: 503,
+                canRetry: true
+            },
+            'no credit': {
+                message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+                statusCode: 503,
+                canRetry: true
+            },
+            'rate limit': {
+                message: 'Trop de tentatives. Veuillez réessayer dans quelques minutes.',
+                statusCode: 429,
+                canRetry: true
+            },
+            'network': {
+                message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
+                statusCode: 503,
+                canRetry: true
+            }
+        };
+        
+        // Chercher une correspondance pour WinSMS
+        for (const [key, value] of Object.entries(winSmsErrorMap)) {
+            if (errorMessage.toLowerCase().includes(key)) {
+                return value;
+            }
+        }
+    }
+    
+    // Erreurs Twilio et par défaut
+    const defaultErrorMap = {
         'Authenticate': {
             message: 'Service d\'envoi SMS temporairement indisponible. Veuillez réessayer dans quelques instants.',
             statusCode: 503,
@@ -38,8 +96,8 @@ const getOTPErrorMessage = (error) => {
     };
     
     // Chercher une correspondance dans le message d'erreur
-    for (const [key, value] of Object.entries(errorMap)) {
-        if (error.message.includes(key)) {
+    for (const [key, value] of Object.entries(defaultErrorMap)) {
+        if (errorMessage.includes(key)) {
             return value;
         }
     }
@@ -70,13 +128,13 @@ exports.testConnection = async (req, res) => {
     // Test de la base de données
     const userCount = await User.countDocuments();
     
-    // Test de Twilio SMS
-    const otpServiceTest = await OTPService.testConnection();
+    // Test des services SMS (WinSMS et Twilio)
+    const smsServicesTest = await SMSRouterService.testConnection();
     
     res.status(200).json({ 
       message: 'Serveur connecté avec succès',
       database: { connected: true, users: userCount },
-      twilio: otpServiceTest
+      smsServices: smsServicesTest
     });
   } catch (error) {
     res.status(500).json({ 
@@ -96,10 +154,17 @@ exports.loginUser = async (req, res) => {
     console.log('=== DEBUT LOGIN ===');
     console.log('Tentative de connexion pour:', phoneNumber);
 
-    // Validation du numéro de téléphone
-    if (!phoneNumber || !phoneNumber.startsWith('+216')) {
+    // Validation du numéro de téléphone (format E.164: +[1-3 digits country code][6-14 digits])
+    if (!phoneNumber || typeof phoneNumber !== 'string') {
       console.log('Numéro invalide:', phoneNumber);
       return res.status(400).json({ message: 'Numéro de téléphone invalide' });
+    }
+
+    // Valider le format E.164 international: +[country code][number]
+    const e164Regex = /^\+[1-9]\d{1,14}$/;
+    if (!e164Regex.test(phoneNumber)) {
+      console.log('Format E.164 invalide:', phoneNumber);
+      return res.status(400).json({ message: 'Numéro de téléphone doit être au format international (ex: +216XXXXXXXX)' });
     }
 
     // Vérifier si l'utilisateur existe
@@ -161,27 +226,34 @@ exports.loginUser = async (req, res) => {
         });
         console.log('Nouveau OTP sauvegardé');
 
-        // Essayer d'envoyer l'OTP via SMS et/ou WhatsApp
+        // Essayer d'envoyer l'OTP via le service approprié (WinSMS ou Twilio)
         try {
-          const result = await OTPService.sendOTP(phoneNumber, otp);
-          console.log('✓ OTP envoyé avec succès via:', result.channels);
-          console.log('Réponses:', result.responses);
+          const result = await SMSRouterService.sendOTP(phoneNumber, otp);
+          console.log(`✓ OTP envoyé avec succès via ${result.provider}:`, result.channels);
+          console.log('Détails:', result);
           
-          // Déterminer le message selon les canaux utilisés
+          // Déterminer le message selon le provider et les canaux utilisés
           let message = 'Code de vérification généré';
-          if (result.channels.includes('whatsapp') && result.channels.includes('sms')) {
-            message = 'Code de vérification envoyé par WhatsApp et SMS';
-          } else if (result.channels.includes('whatsapp')) {
-            message = 'Code de vérification envoyé par WhatsApp';
-          } else if (result.channels.includes('sms')) {
-            message = 'Code de vérification envoyé par SMS';
+          const channels = result.channels || [];
+          
+          if (result.provider === 'winsms') {
+            message = 'Code de vérification envoyé par SMS (WinSMS)';
+          } else if (result.provider === 'twilio') {
+            if (channels.includes('whatsapp') && channels.includes('sms')) {
+              message = 'Code de vérification envoyé par WhatsApp et SMS';
+            } else if (channels.includes('whatsapp')) {
+              message = 'Code de vérification envoyé par WhatsApp';
+            } else if (channels.includes('sms')) {
+              message = 'Code de vérification envoyé par SMS';
+            }
           }
           
           return res.status(200).json({
             _id: user._id,
             phoneNumber: user.phoneNumber,
             isVerified: false,
-            channelsSent: result.channels,
+            channelsSent: channels,
+            provider: result.provider,
             otpSent: true,
             message
           });
@@ -556,6 +628,18 @@ exports.registerDeliverer = async (req, res) => {
       return res.status(400).json({ message: 'Un compte existe déjà avec ce numéro de téléphone' });
     }
 
+    // Generate unique security code for deliverer
+    let securityCode;
+    try {
+      securityCode = await generateUniqueSecurityCode('deliverer', 5);
+      console.log(`🔐 [Deliverer Registration] Generated security code: ${securityCode}`);
+    } catch (codeError) {
+      console.error('Erreur génération code de sécurité:', codeError.message);
+      return res.status(500).json({
+        message: 'Impossible de générer un code de sécurité. Veuillez réessayer.'
+      });
+    }
+
     // Créer le livreur
     const deliverer = await User.create({
       phoneNumber,
@@ -564,6 +648,7 @@ exports.registerDeliverer = async (req, res) => {
       email: email || null,
       vehicle: vehicle || '',
       role: 'deliverer',
+      securityCode: securityCode,
       isVerified: true, // Le livreur est automatiquement vérifié
       status: 'active'
     });
@@ -578,6 +663,7 @@ exports.registerDeliverer = async (req, res) => {
         phoneNumber: deliverer.phoneNumber,
         email: deliverer.email,
         vehicle: deliverer.vehicle,
+        securityCode: deliverer.securityCode,
         role: deliverer.role,
         isVerified: deliverer.isVerified,
         status: deliverer.status,
@@ -601,7 +687,29 @@ exports.registerDeliverer = async (req, res) => {
 // @route   POST /api/auth/login-deliverer
 // @access  Public
 exports.loginDeliverer = async (req, res) => {
-  const { phoneNumber } = req.body;
+  const { phoneNumber, securityCode } = req.body;
+
+  // Validate required phoneNumber parameter
+  if (!phoneNumber) {
+    return res.status(400).json({
+      message: 'Numéro de téléphone requis'
+    });
+  }
+
+  // Check if backward compatibility mode is enabled (default: false - security code required)
+  const requireSecurityCode = process.env.REQUIRE_DELIVERER_SECURITY_CODE !== 'false';
+
+  // Validate security code only if required
+  if (requireSecurityCode && !securityCode) {
+    return res.status(400).json({
+      message: 'Code de sécurité requis'
+    });
+  }
+
+  // Warn if compatibility mode is enabled (security code not required)
+  if (!requireSecurityCode) {
+    console.warn('⚠️ [Compatibility Mode] Connexion livreur sans code de sécurité activée');
+  }
 
   // Normaliser le numéro fourni : si l'utilisateur envoie 8 chiffres, ajouter le préfixe +216
   const rawPhone = phoneNumber;
@@ -628,10 +736,15 @@ exports.loginDeliverer = async (req, res) => {
       // Créer un nouveau livreur s'il n'existe pas
       console.log('Création d\'un nouveau livreur pour:', phoneNumber);
       try {
+        // Generate unique security code for new deliverer
+        const newSecurityCode = await generateUniqueSecurityCode('deliverer', 5);
+        console.log(`🔐 [Deliverer Login] Generated security code for new deliverer: ${newSecurityCode}`);
+
         deliverer = await User.create({
           phoneNumber: normalizedPhone,
           firstName: '', // Sera rempli plus tard
           lastName: '',
+          securityCode: newSecurityCode,
           role: 'deliverer',
           isVerified: true,
           status: 'pending'
@@ -642,6 +755,63 @@ exports.loginDeliverer = async (req, res) => {
         return res.status(500).json({ message: 'Erreur lors de la création du compte livreur' });
       }
     }
+
+    // === SECURITY CODE VALIDATION ===
+    // Skip validation if security code not required (compatibility mode)
+    if (requireSecurityCode) {
+      // Check if deliverer is locked due to too many failed attempts
+      if (deliverer.securityCodeLockedUntil && new Date() < deliverer.securityCodeLockedUntil) {
+        const minutesRemaining = Math.ceil(
+          (deliverer.securityCodeLockedUntil - new Date()) / (1000 * 60)
+        );
+        console.warn(`⚠️ [Security] Deliverer ${deliverer._id} locked until ${deliverer.securityCodeLockedUntil}`);
+        return res.status(429).json({
+          message: `Trop de tentatives. Réessayez dans ${minutesRemaining} minutes.`
+        });
+      }
+
+      // Validate security code
+      const { validateSecurityCode } = require('../utils/securityCodeGenerator');
+
+      if (!deliverer.securityCode) {
+        // Legacy deliverer without security code - auto-generate on save
+        console.warn(`⚠️ [Security] Deliverer ${deliverer._id} missing security code. Auto-generating...`);
+        // Trigger pre-save hook by saving
+        await deliverer.save({ validateBeforeSave: false });
+        console.log(`🔐 [Security] Security code auto-generated for deliverer ${deliverer._id}`);
+      }
+
+      // Compare provided code with stored code
+      if (!validateSecurityCode(securityCode, deliverer.securityCode)) {
+        // Increment failed attempts
+        deliverer.failedSecurityCodeAttempts = (deliverer.failedSecurityCodeAttempts || 0) + 1;
+        console.warn(`⚠️ [Security] Invalid security code for deliverer ${deliverer._id}. Attempts: ${deliverer.failedSecurityCodeAttempts}`);
+
+        // Lock after 5 failed attempts for 15 minutes
+        if (deliverer.failedSecurityCodeAttempts >= 5) {
+          deliverer.securityCodeLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+          console.warn(`🔒 [Security] Deliverer ${deliverer._id} locked until ${deliverer.securityCodeLockedUntil}`);
+        }
+
+        await deliverer.save({ validateBeforeSave: false });
+        return res.status(401).json({
+          message: 'Identifiants invalides'
+        });
+      }
+
+      // Security code validation successful - reset failed attempts
+      console.log(`✅ [Security] Code de sécurité validé avec succès pour livreur ${deliverer._id}`);
+      if (deliverer.failedSecurityCodeAttempts > 0) {
+        deliverer.failedSecurityCodeAttempts = 0;
+      }
+      if (deliverer.securityCodeLockedUntil) {
+        deliverer.securityCodeLockedUntil = null;
+      }
+    } else {
+      // Compatibility mode - allow login without security code validation
+      console.warn(`⚠️ [Compatibility Mode] Skipping security code validation for deliverer ${deliverer._id}`);
+    }
+    // === END SECURITY CODE VALIDATION ===
 
     // Vérifier le statut de vérification
     console.log('Statut de vérification:', deliverer.isVerified);
@@ -1354,8 +1524,9 @@ exports.testOTPService = async (req, res) => {
     // Generate a test OTP (6-digit code)
     const testOTP = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Send test OTP
-    const testResult = await OTPService.sendOTP(phoneNumber, testOTP);
+    // Send test OTP via SMS Router
+    const testResult = await SMSRouterService.sendOTP(phoneNumber, testOTP);
+    console.log(`Test SMS sent via ${testResult.provider}`);
     
     // Determine which channel was used for logging
     const channels = testResult.channels || [];
@@ -1420,6 +1591,341 @@ exports.testOTPService = async (req, res) => {
     
     res.status(500).json({
       message: 'OTP test failed',
+      error: error.message
+    });
+  }
+};
+
+// ============= WINSMS MONITORING ENDPOINTS =============
+
+// Test WinSMS Connection (connection check only, no SMS sent)
+exports.testWinSMSConnection = async (req, res) => {
+  try {
+    const winSmsService = require('../services/winSmsService');
+    
+    const connectionTest = await winSmsService.testConnection();
+    
+    res.status(connectionTest.success ? 200 : 503).json({
+      message: connectionTest.success ? 'WinSMS connection successful' : 'WinSMS connection failed',
+      timestamp: new Date(),
+      data: {
+        provider: 'winsms',
+        connected: connectionTest.success,
+        balance: connectionTest.balance,
+        error: connectionTest.error
+      }
+    });
+  } catch (error) {
+    console.error('Error testing WinSMS connection:', error);
+    res.status(500).json({
+      message: 'Failed to test WinSMS connection',
+      error: error.message
+    });
+  }
+};
+
+// Check WinSMS Service Health
+exports.checkWinSMSServiceHealth = async (req, res) => {
+  try {
+    const WinSMSLog = require('../models/WinSMSLog');
+    const winSmsService = require('../services/winSmsService');
+    
+    // Test connection
+    const connectionTest = await winSmsService.testConnection();
+    
+    // Exclude test entries from production health check
+    const testFilter = { 'metadata.isTest': { $ne: true } };
+    
+    // Get recent success rate (last 1 hour)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recentLogs = await WinSMSLog.find({
+      createdAt: { $gte: oneHourAgo },
+      ...testFilter
+    });
+    
+    const successCount = recentLogs.filter(log => log.status === 'success').length;
+    const totalCount = recentLogs.length;
+    const successRate = totalCount > 0 ? (successCount / totalCount) * 100 : 100;
+    
+    const health = {
+      status: connectionTest.success ? 'healthy' : 'unhealthy',
+      timestamp: new Date(),
+      details: {
+        winsms_connection: connectionTest.success ? 'connected' : 'disconnected',
+        balance: connectionTest.balance,
+        recent_success_rate: parseFloat(successRate.toFixed(2)),
+        attempts_last_hour: totalCount,
+        successful_sends: successCount
+      }
+    };
+    
+    const statusCode = health.status === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(health);
+  } catch (error) {
+    console.error('Error checking WinSMS service health:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to check WinSMS service health',
+      error: error.message
+    });
+  }
+};
+
+// Get WinSMS Metrics
+exports.getWinSMSMetrics = async (req, res) => {
+  try {
+    const WinSMSLog = require('../models/WinSMSLog');
+    
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    // Exclude test entries from production metrics
+    const testFilter = { 'metadata.isTest': { $ne: true } };
+    
+    const metricsAggregation = [
+      {
+        $facet: {
+          lastHour: [
+            { $match: { createdAt: { $gte: oneHourAgo }, ...testFilter } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' }
+              }
+            }
+          ],
+          last24Hours: [
+            { $match: { createdAt: { $gte: twentyFourHoursAgo }, ...testFilter } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' }
+              }
+            }
+          ],
+          last7Days: [
+            { $match: { createdAt: { $gte: sevenDaysAgo }, ...testFilter } },
+            {
+              $group: {
+                _id: '$status',
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: '$responseTime' }
+              }
+            }
+          ],
+          errorDistribution: [
+            { $match: { 'errorDetails.type': { $exists: true }, ...testFilter } },
+            {
+              $group: {
+                _id: '$errorDetails.type',
+                count: { $sum: 1 },
+                lastOccurrence: { $max: '$createdAt' }
+              }
+            },
+            { $sort: { count: -1 } }
+          ]
+        }
+      }
+    ];
+    
+    const metrics = await WinSMSLog.aggregate(metricsAggregation);
+    
+    res.status(200).json({
+      timestamp: new Date(),
+      provider: 'winsms',
+      metrics: metrics[0]
+    });
+  } catch (error) {
+    console.error('Error getting WinSMS metrics:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve WinSMS metrics',
+      error: error.message
+    });
+  }
+};
+
+// Get WinSMS Service Status (Dashboard view)
+exports.getWinSMSServiceStatus = async (req, res) => {
+  try {
+    const WinSMSLog = require('../models/WinSMSLog');
+    const winSmsService = require('../services/winSmsService');
+    
+    const connectionTest = await winSmsService.testConnection();
+    
+    // Exclude test entries from production status
+    const testFilter = { 'metadata.isTest': { $ne: true } };
+    
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentLogs = await WinSMSLog.find({
+      createdAt: { $gte: twentyFourHoursAgo },
+      ...testFilter
+    }).sort({ createdAt: -1 }).limit(10);
+    
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recentErrors = await WinSMSLog.aggregate([
+      { $match: { createdAt: { $gte: oneHourAgo }, status: 'failed', ...testFilter } },
+      {
+        $group: {
+          _id: '$errorDetails.type',
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { count: -1 } }
+    ]);
+    
+    const oneHourLogs = await WinSMSLog.find({
+      createdAt: { $gte: oneHourAgo },
+      ...testFilter
+    });
+    const successCount = oneHourLogs.filter(log => log.status === 'success').length;
+    const successRate = oneHourLogs.length > 0 ? (successCount / oneHourLogs.length) * 100 : 100;
+    
+    const status = {
+      timestamp: new Date(),
+      provider: 'winsms',
+      health: {
+        winsms_connection: connectionTest.success ? 'connected' : 'disconnected',
+        balance: connectionTest.balance,
+        overall_status: connectionTest.success ? 'operational' : 'degraded'
+      },
+      performance: {
+        success_rate_last_hour: parseFloat(successRate.toFixed(2)),
+        total_attempts_last_hour: oneHourLogs.length,
+        successful_sends: successCount
+      },
+      recent_errors: recentErrors.slice(0, 5),
+      recent_activity: recentLogs.map(log => ({
+        phoneNumber: log.phoneNumber,
+        status: log.status,
+        errorType: log.errorDetails?.type || null,
+        timestamp: log.createdAt
+      }))
+    };
+    
+    res.status(200).json(status);
+  } catch (error) {
+    console.error('Error getting WinSMS service status:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve WinSMS service status',
+      error: error.message
+    });
+  }
+};
+
+// Test WinSMS Service
+exports.testWinSMSService = async (req, res) => {
+  try {
+    const WinSMSLog = require('../models/WinSMSLog');
+    const winSmsService = require('../services/winSmsService');
+    
+    const { phoneNumber } = req.body;
+    
+    if (!phoneNumber || typeof phoneNumber !== 'string') {
+      return res.status(400).json({
+        message: 'Phone number is required'
+      });
+    }
+    
+    // Validate Tunisian number format (+216)
+    if (!phoneNumber.startsWith('+216')) {
+      return res.status(400).json({
+        message: 'WinSMS only supports Tunisian numbers (+216)'
+      });
+    }
+    
+    const testOTP = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    // Send OTP with test metadata
+    const testResult = await winSmsService.sendOTP(phoneNumber, testOTP, {
+      isTest: true,
+      testedAt: new Date()
+    });
+    
+    res.status(200).json({
+      message: 'WinSMS test successful',
+      data: {
+        phoneNumber,
+        provider: 'winsms',
+        otp: testOTP,
+        status: testResult.success ? 'sent' : 'failed',
+        messageId: testResult.messageId,
+        timestamp: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error testing WinSMS service:', error);
+    
+    res.status(500).json({
+      message: 'WinSMS test failed',
+      error: error.message
+    });
+  }
+};
+
+// ============= UNIFIED SMS DASHBOARD =============
+
+// Get Combined SMS Services Dashboard (WinSMS + Twilio)
+exports.getSMSDashboard = async (req, res) => {
+  try {
+    const WinSMSLog = require('../models/WinSMSLog');
+    const winSmsService = require('../services/winSmsService');
+    
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    // Exclude test entries from production dashboard
+    const testFilter = { 'metadata.isTest': { $ne: true } };
+    
+    // WinSMS Stats
+    const winSmsConnection = await winSmsService.testConnection();
+    const winSmsLogs = await WinSMSLog.find({ createdAt: { $gte: oneHourAgo }, ...testFilter });
+    const winSmsSuccess = winSmsLogs.filter(log => log.status === 'success').length;
+    const winSmsRate = winSmsLogs.length > 0 ? (winSmsSuccess / winSmsLogs.length) * 100 : 0;
+    
+    // Twilio Stats
+    const twilioConnection = await OTPService.testConnection();
+    const twilioLogs = await OTPLog.find({ createdAt: { $gte: oneHourAgo } });
+    const twilioSuccess = twilioLogs.filter(log => log.status === 'success').length;
+    const twilioRate = twilioLogs.length > 0 ? (twilioSuccess / twilioLogs.length) * 100 : 0;
+    
+    // Combined Stats (24h)
+    const winSmsLogs24h = await WinSMSLog.find({ createdAt: { $gte: twentyFourHoursAgo }, ...testFilter });
+    const twilioLogs24h = await OTPLog.find({ createdAt: { $gte: twentyFourHoursAgo } });
+    
+    const dashboard = {
+      timestamp: new Date(),
+      summary: {
+        total_sms_sent_24h: winSmsLogs24h.length + twilioLogs24h.length,
+        winsms_count_24h: winSmsLogs24h.length,
+        twilio_count_24h: twilioLogs24h.length
+      },
+      winsms: {
+        status: winSmsConnection.success ? 'operational' : 'degraded',
+        balance: winSmsConnection.balance,
+        success_rate_1h: parseFloat(winSmsRate.toFixed(2)),
+        total_attempts_1h: winSmsLogs.length,
+        successful_sends_1h: winSmsSuccess
+      },
+      twilio: {
+        status: twilioConnection.success ? 'operational' : 'degraded',
+        success_rate_1h: parseFloat(twilioRate.toFixed(2)),
+        total_attempts_1h: twilioLogs.length,
+        successful_sends_1h: twilioSuccess
+      },
+      routing: {
+        tunisia_numbers: winSmsLogs.length,
+        international_numbers: twilioLogs.length
+      }
+    };
+    
+    res.status(200).json(dashboard);
+  } catch (error) {
+    console.error('Error getting SMS dashboard:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve SMS dashboard',
       error: error.message
     });
   }

@@ -8,6 +8,10 @@ router.post('/flouci-webhook', paymentController.flouciWebhook);
 router.get('/flouci-success', paymentController.handleFlouciSuccess);
 router.get('/flouci-failure', paymentController.handleFlouciFailure);
 
+router.post('/initiate-clictopay', paymentController.initiateClickToPayPayment);
+router.get('/clictopay-success', paymentController.handleClickToPaySuccess);
+router.get('/clictopay-failure', paymentController.handleClickToPayFailure);
+
 // Wallet balance route (optional but recommended)
 router.get('/wallet/balance', protect, async (req, res) => {
   try {

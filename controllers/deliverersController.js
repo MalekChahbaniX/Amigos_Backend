@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Session = require('../models/Session');
 const Order = require('../models/Order');
+const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
 
 // @desc    Get all deliverers with optional search and pagination
 // @route   GET /api/deliverers
@@ -35,7 +36,7 @@ exports.getDeliverers = async (req, res) => {
 
     // Get deliverers with pagination
     const deliverers = await User.find(searchQuery)
-      .select('firstName lastName phoneNumber status createdAt')
+      .select('firstName lastName phoneNumber status createdAt securityCode')
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -45,6 +46,7 @@ exports.getDeliverers = async (req, res) => {
       id: deliverer._id.toString(),
       name: `${deliverer.firstName} ${deliverer.lastName}`.trim(),
       phone: deliverer.phoneNumber || '',
+      securityCode: deliverer.securityCode || '',
       vehicle: 'Moto', // TODO: Add vehicle field to User model when needed
       currentOrders: 0, // TODO: Get from active orders when implemented
       totalDeliveries: 0, // TODO: Calculate from completed orders when implemented
@@ -87,7 +89,7 @@ exports.getDelivererById = async (req, res) => {
       query.city = req.user.city;
     }
 
-    const deliverer = await User.findOne(query).select('firstName lastName phoneNumber status createdAt location');
+    const deliverer = await User.findOne(query).select('firstName lastName phoneNumber status createdAt location securityCode');
 
     if (!deliverer) {
       return res.status(404).json({ message: 'Livreur non trouvé' });
@@ -97,6 +99,7 @@ exports.getDelivererById = async (req, res) => {
       id: deliverer._id.toString(),
       name: `${deliverer.firstName} ${deliverer.lastName}`.trim(),
       phone: deliverer.phoneNumber || '',
+      securityCode: deliverer.securityCode || '',
       vehicle: 'Moto', // TODO: Add vehicle field when needed
       currentOrders: 0,
       totalDeliveries: 0,
@@ -148,11 +151,24 @@ exports.createDeliverer = async (req, res) => {
       });
     }
 
+    // Generate unique security code with retry logic
+    let securityCode;
+    try {
+      securityCode = await generateUniqueSecurityCode('deliverer', 5);
+      console.log(`🔐 [Deliverer] Generated security code for new deliverer: ${securityCode}`);
+    } catch (codeError) {
+      console.error('Erreur génération code de sécurité:', codeError.message);
+      return res.status(500).json({
+        message: 'Impossible de générer un code de sécurité unique. Veuillez réessayer.'
+      });
+    }
+
     // Create new deliverer
     const newDelivererData = {
       firstName,
       lastName,
       phoneNumber: phone,
+      securityCode: securityCode,
       role: 'deliverer',
       status: 'active',
       isVerified: true // Auto-verify deliverers created by admin
@@ -170,6 +186,7 @@ exports.createDeliverer = async (req, res) => {
       id: deliverer._id.toString(),
       name: `${deliverer.firstName} ${deliverer.lastName}`.trim(),
       phone: deliverer.phoneNumber,
+      securityCode: deliverer.securityCode,
       vehicle: vehicle || 'Moto',
       currentOrders: 0,
       totalDeliveries: 0,
@@ -262,6 +279,66 @@ exports.deleteDeliverer = async (req, res) => {
     res.status(500).json({
       message: 'Erreur lors de la suppression du livreur',
       error:   error.message
+    });
+  }
+}
+
+// @desc    Regenerate security code for a deliverer
+// @route   PUT /api/deliverers/:id/regenerate-security-code
+// @access  Private (Super Admin and Admin only)
+exports.regenerateSecurityCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminId = req.user.id;
+    const adminRole = req.user.role;
+
+    // Find the deliverer
+    let deliverer = await User.findOne({
+      _id: id,
+      role: 'deliverer'
+    });
+
+    if (!deliverer) {
+      return res.status(404).json({ message: 'Livreur non trouvé' });
+    }
+
+    // If admin (not superAdmin), verify the deliverer belongs to the admin's city
+    if (adminRole === 'admin') {
+      if (!deliverer.city || deliverer.city.toString() !== req.user.city?.toString()) {
+        return res.status(403).json({ message: 'Accès non autorisé à ce livreur' });
+      }
+    }
+
+    // Store old code (masked) for logging
+    const oldCodeMasked = deliverer.securityCode ? deliverer.securityCode.substring(0, 2) + '****' : 'N/A';
+
+    // Generate new unique security code
+    const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
+    const newSecurityCode = await generateUniqueSecurityCode('deliverer', 5);
+
+    // Mask new code for logging (first 2 chars + ****)
+    const newCodeMasked = newSecurityCode.substring(0, 2) + '****';
+
+    // Update the deliverer with new security code
+    deliverer = await User.findOneAndUpdate(
+      { _id: id, role: 'deliverer' },
+      { securityCode: newSecurityCode },
+      { new: true }
+    );
+
+    // Log the regeneration event for audit (without exposing the new code in plaintext)
+    console.log(`🔐 [Security] Deliverer security code regenerated - Deliverer: ${id}, Old: ${oldCodeMasked}, New: ${newCodeMasked}, Admin: ${adminId}`);
+
+    res.status(200).json({
+      message: 'Code de sécurité régénéré avec succès',
+      securityCode: newSecurityCode
+    });
+
+  } catch (error) {
+    console.error('Error regenerating security code:', error);
+    res.status(500).json({
+      message: 'Erreur lors de la régénération du code de sécurité',
+      error: error.message
     });
   }
 }

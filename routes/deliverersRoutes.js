@@ -6,6 +6,7 @@ const {
   createDeliverer,
   updateDelivererStatus,
   deleteDeliverer,
+  regenerateSecurityCode,
   getDelivererSessions,
   getDelivererBalance
 } = require('../controllers/deliverersController');
@@ -18,6 +19,7 @@ router.get('/:id/balance', protect, isAdminOrSuperAdmin, getDelivererBalance);
 router.get('/:id', protect, isAdminOrSuperAdmin, getDelivererById);
 router.post('/', protect, isAdminOrSuperAdmin, createDeliverer);
 router.put('/:id/status', protect, isAdminOrSuperAdmin, updateDelivererStatus);
+router.put('/:id/regenerate-security-code', protect, isAdminOrSuperAdmin, regenerateSecurityCode);
 router.delete('/:id', protect, isAdminOrSuperAdmin, deleteDeliverer);
 
 module.exports = router;

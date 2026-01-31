@@ -16,6 +16,9 @@ const {
   getProviderDailyBalance,
   payProviderBalance,
   logoutProvider,
+  getProviderOrders,
+  updateProviderOrderStatus,
+  getProviderOrderStats,
 } = require('../controllers/providerController');
 
 // Routes protégées pour les prestataires connectés (DOIVENT VENIR EN PREMIER)
@@ -33,6 +36,15 @@ router.put('/me/balance/pay', isProvider, payProviderBalance);
 
 // POST /api/providers/logout - Déconnexion du prestataire
 router.post('/logout', isProvider, logoutProvider);
+
+// GET /api/providers/me/orders - Récupérer les commandes du prestataire
+router.get('/me/orders', isProvider, getProviderOrders);
+
+// GET /api/providers/me/orders/stats - Statistiques des commandes
+router.get('/me/orders/stats', isProvider, getProviderOrderStats);
+
+// PUT /api/providers/me/orders/:orderId/status - Mettre à jour le statut
+router.put('/me/orders/:orderId/status', isProvider, updateProviderOrderStatus);
 
 // Routes publiques pour les prestataires et produits
 router.get('/', getProviders);

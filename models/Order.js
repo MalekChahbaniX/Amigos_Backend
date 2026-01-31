@@ -9,7 +9,17 @@ const orderSchema = new mongoose.Schema({
   provider: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Provider',
-    required: true,
+  },
+  providers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Provider',
+  }],
+  _providersValidate: {
+    type: Boolean,
+    default: function() {
+      // Validation happens via validate function below
+      return true;
+    }
   },
   promo: {
     type: mongoose.Schema.Types.ObjectId,
@@ -17,6 +27,11 @@ const orderSchema = new mongoose.Schema({
   },
   items: [
     {
+      providerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Provider',
+        required: true,
+      },
       product: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Product',
@@ -49,6 +64,33 @@ const orderSchema = new mongoose.Schema({
       },
     },
   ],
+  // PROVIDER FEES: Fees calculated per provider
+  providerFees: [{
+    providerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Provider',
+      required: true,
+    },
+    deliveryFee: {
+      type: Number,
+      required: true,
+    },
+    appFee: {
+      type: Number,
+      required: true,
+    },
+    p1Total: {
+      type: Number,
+      required: true,
+    },
+    p2Total: {
+      type: Number,
+      required: true,
+    },
+    distance: {
+      type: Number,
+    },
+  }],
   // TOTALS
   totalAmount: {
     type: Number,
@@ -77,7 +119,7 @@ const orderSchema = new mongoose.Schema({
   // AUTRES CHAMPS
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'collected', 'in_delivery', 'delivered', 'cancelled'],
+    enum: ['pending', 'accepted', 'preparing', 'collected', 'in_delivery', 'delivered', 'cancelled'],
     default: 'pending',
   },
   // CANCELLATION FIELDS
@@ -248,10 +290,40 @@ const orderSchema = new mongoose.Schema({
   },
 });
 
+// Validation: providers must have 1-2 elements
+orderSchema.pre('validate', function(next) {
+  // Allow providers array with 1-2 elements
+  if (this.providers && Array.isArray(this.providers)) {
+    if (this.providers.length < 1 || this.providers.length > 2) {
+      return next(new Error('Une commande doit contenir entre 1 et 2 prestataires'));
+    }
+    return next();
+  }
+  // For backward compatibility, if no providers but has provider, create providers array
+  if (this.provider && (!this.providers || this.providers.length === 0)) {
+    this.providers = [this.provider];
+    return next();
+  }
+  // If neither providers nor provider exists, this will fail on save
+  next(new Error('Une commande doit contenir au moins 1 prestataire'));
+});
+
 const Order = mongoose.model('Order', orderSchema);
+
+// Virtual for orderGenre
+orderSchema.virtual('orderGenre').get(function() {
+  const providersList = this.providers && this.providers.length > 0 ? this.providers : (this.provider ? [this.provider] : []);
+  return providersList.length === 1 ? 'C1' : 'C2';
+});
+
+// Enable virtuals in JSON and Object output
+orderSchema.set('toJSON', { virtuals: true });
+orderSchema.set('toObject', { virtuals: true });
+
 orderSchema.index({ status: 1, orderType: 1, isGrouped: 1, scheduledFor: 1 });
 // Keep provider+zone+scheduledFor index for provider/zone based grouping/batching
 orderSchema.index({ provider: 1, zone: 1, scheduledFor: 1 });
+orderSchema.index({ providers: 1 });
 orderSchema.index({ status: 1, protectionEnd: 1 });
 orderSchema.index({ isUrgent: 1, protectionEnd: 1 });
 orderSchema.index({ 'prescription.type': 1 });
