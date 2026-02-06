@@ -1,0 +1,271 @@
+{
+  "info": {
+    "_postman_id": "clictopay-test-collection",
+    "name": "ClickToPay API Tests",
+    "description": "Collection pour tester les APIs ClickToPay et obtenir les numéros d'autorisation des cartes de test",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Initier Paiement ClickToPay",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Tests pour la réponse de l'API",
+              "pm.test(\"Status code is 201\", function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "",
+              "pm.test(\"Response has paymentUrl\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.be.true;",
+              "    pm.expect(jsonData.paymentUrl).to.be.a('string');",
+              "    pm.expect(jsonData.clickToPayOrderId).to.be.a('string');",
+              "});",
+              "",
+              "// Sauvegarder les données pour les requêtes suivantes",
+              "if (pm.response.code === 201) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set(\"clickToPayOrderId\", response.clickToPayOrderId);",
+              "    pm.collectionVariables.set(\"transactionId\", response.transactionId);",
+              "    pm.collectionVariables.set(\"paymentUrl\", response.paymentUrl);",
+              "    ",
+              "    console.log(\"📍 Numéro d'autorisation (ClickToPay Order ID):\", response.clickToPayOrderId);",
+              "    console.log(\"🔗 URL de paiement:\", response.paymentUrl);",
+              "    console.log(\"💳 Transaction ID:\", response.transactionId);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"amount\": 10000,\n    \"userId\": \"{{userId}}\",\n    \"paymentMethodType\": \"card\",\n    \"currency\": \"788\",\n    \"orderDetails\": {\n        \"description\": \"Test ClickToPay Payment\",\n        \"items\": [\n            {\n                \"name\": \"Test Item\",\n                \"quantity\": 1,\n                \"price\": 10000\n            }\n        ]\n    }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/payments/initiate-clictopay",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "payments", "initiate-clictopay"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Vérifier Statut Paiement",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response has order status\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.be.true;",
+              "    pm.expect(jsonData.data.orderStatus).to.be.a('number');",
+              "});",
+              "",
+              "// Afficher les détails du statut",
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    const status = response.data.orderStatus;",
+              "    const statusNames = {",
+              "        0: 'Commande enregistrée, mais pas payée',",
+              "        1: 'Montant pré-autorisation bloqué',",
+              "        2: 'Le montant a été déposé avec succès ✅',",
+              "        3: 'Annulation d\\'autorisation',",
+              "        4: 'Transaction remboursée',",
+              "        5: 'Autorisation par ACS initiée',",
+              "        6: 'Autorisation refusée ❌'",
+              "    };",
+              "    ",
+              "    console.log(\"📊 Statut de la commande:\", status, \"-\", statusNames[status] || `Status inconnu (${status})`);",
+              "    console.log(\"💰 Montant:\", response.data.amount, \"millimes\");",
+              "    console.log(\"🔢 Code action:\", response.data.actionCode);",
+              "    console.log(\"📝 Description action:\", response.data.actionCodeDescription);",
+              "    ",
+              "    if (status === 2) {",
+              "        console.log(\"✅ PAIMENT AUTORISÉ - Numéro d'autorisation valide!\");",
+              "    }",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/payments/verify-clictopay/{{clickToPayOrderId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "payments", "verify-clictopay", "{{clickToPayOrderId}}"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "3. Simuler Callback Succès",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "console.log(\"🔗 Simulation du callback de succès ClickToPay\");",
+              "console.log(\"📋 Order ID utilisé:\", pm.collectionVariables.get(\"clickToPayOrderId\"));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/payments/clictopay-success?orderId={{clickToPayOrderId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "payments", "clictopay-success"],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{clickToPayOrderId}}"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "4. Simuler Callback Échec",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200 or 400\", function () {",
+              "    pm.expect([200, 400]).to.include(pm.response.code);",
+              "});",
+              "",
+              "console.log(\"🔗 Simulation du callback d'échec ClickToPay\");",
+              "console.log(\"📋 Order ID utilisé:\", pm.collectionVariables.get(\"clickToPayOrderId\"));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/payments/clictopay-failure?orderId={{clickToPayOrderId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "payments", "clictopay-failure"],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{clickToPayOrderId}}"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "5. Obtenir Solde Wallet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    console.log(\"💰 Solde du wallet:\", response.data.balance, \"DT\");",
+              "    console.log(\"📊 Détails du solde:\", JSON.stringify(response.data, null, 2));",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{authToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/payments/wallet/balance",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "payments", "wallet", "balance"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Log avant chaque requête",
+          "console.log(\"🚀 Exécution de la requête:\", pm.info.requestName);",
+          "console.log(\"⏰ Heure:\", new Date().toISOString());",
+          "console.log(\"🔗 Base URL:\", pm.collectionVariables.get(\"baseUrl\"));"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Log après chaque requête",
+          "console.log(\"✅ Réponse reçue pour:\", pm.info.requestName);",
+          "console.log(\"📊 Status:\", pm.response.code);",
+          "console.log(\"⏱️  Durée:\", pm.response.responseTime, \"ms\");"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://192.168.1.32:5000",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "507f1f77bcf86cd799439011",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "votre_token_jwt_ici",
+      "type": "string"
+    }
+  ]
+}

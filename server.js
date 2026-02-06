@@ -129,7 +129,8 @@ const io = new Server(server, {
       'http://localhost:5173',  // Dashboard dev
       'http://localhost:3000',
       'http://192.168.1.104:5173',  // Dashboard dev (IP locale)
-      'http://192.168.1.104:5000'
+      'http://192.168.1.104:5000',
+      'http://192.168.1.32:5000'
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     credentials: true,
@@ -283,10 +284,14 @@ async function notifyNewOrder(order) {
       location: order.client.location
     },
     provider: {
-      name: order.provider.name,
-      type: order.provider.type,
-      phone: order.provider.phone,
-      address: order.provider.address
+      name: order.provider ? order.provider.name : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].name : 'Unknown'),
+      type: order.provider ? order.provider.type : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].type : 'unknown'),
+      phone: order.provider ? order.provider.phone : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].phone : 'N/A'),
+      address: order.provider ? order.provider.address : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].address : 'N/A')
     },
     items: order.items.map(item => ({
       name: item.name,
@@ -347,10 +352,14 @@ async function notifyAdminsImmediate(order) {
       location: order.client.location
     },
     provider: {
-      name: order.provider.name,
-      type: order.provider.type,
-      phone: order.provider.phone,
-      address: order.provider.address
+      name: order.provider ? order.provider.name : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].name : 'Unknown'),
+      type: order.provider ? order.provider.type : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].type : 'unknown'),
+      phone: order.provider ? order.provider.phone : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].phone : 'N/A'),
+      address: order.provider ? order.provider.address : 
+            (order.providers && order.providers.length > 0 ? order.providers[0].address : 'N/A')
     },
     items: order.items.map(item => ({
       name: item.name,
@@ -425,15 +434,11 @@ global.scheduleOrderAutoCancellation = function(orderId, delayMs = 600000) {
         // Create cancellation record for audit trail
         try {
           const cancellation = new Cancellation({
-            orderId: order._id,
-            cancellationType: 'ANNULER_1',
-            cancelledBy: 'SYSTEM_AUTO_CANCEL',
-            reason: order.cancellationReason,
-            cancelledAt: now,
-            orderDetails: {
-              totalAmount: order.totalAmount,
-              platformSolde: order.platformSolde
-            }
+            order: order._id,
+            type: 'ANNULER_1',
+            mode: 'SYSTEM_AUTO',
+            solde: order.platformSolde || 0,
+            reason: order.cancellationReason
           });
           await cancellation.save();
           console.log(`📋 Cancellation record created for order ${orderId}`);

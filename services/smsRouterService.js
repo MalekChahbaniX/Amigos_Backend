@@ -1,4 +1,5 @@
-const winSmsService = require('./winSmsService');
+const WinSMSService = require('./winSmsService');
+const winSmsService = new WinSMSService();
 const OTPService = require('./otpService');
 
 class SMSRouterService {

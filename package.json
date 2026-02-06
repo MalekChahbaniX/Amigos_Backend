@@ -8,7 +8,9 @@
     "migrate:images": "node scripts/migrateImagesToHttps.js",
     "diagnose:images": "node scripts/diagnoseImageUrls.js",
     "test:clictopay": "node scripts/testClickToPay.js",
-    "test:clictopay:verbose": "DEBUG=* node scripts/testClickToPay.js"
+    "test:clictopay:verbose": "DEBUG=* node scripts/testClickToPay.js",
+    "fix:security-index": "node scripts/fixSecurityCodeIndex.js",
+    "validate:winsms": "node scripts/validateWinSMSConfig.js"
   },
   "author": "malek chahbani",
   "license": "ISC",

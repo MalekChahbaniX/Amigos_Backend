@@ -123,16 +123,28 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  // Security code for deliverers (6-digit unique code)
+  // Security code for deliverers (6-digit) and clients (4-digit)
   securityCode: {
     type: String,
     required: function() {
       return this.role === 'deliverer';
     },
-    match: [/^\d{6}$/, 'Le code de sécurité doit être exactement 6 chiffres'],
+    validate: [
+      {
+        validator: function(v) {
+          if (!v) return true; // Optional for clients
+          
+          // Check if value matches either 4-digit (client) or 6-digit (deliverer) format
+          const is4Digits = /^\d{4}$/.test(v);
+          const is6Digits = /^\d{6}$/.test(v);
+          
+          return is4Digits || is6Digits;
+        },
+        message: 'Le code de sécurité doit être 4 chiffres (client) ou 6 chiffres (livreur)'
+      }
+    ],
     unique: true,
-    sparse: true,
-    default: null
+    sparse: true
   },
   // Daily balance records for deliverers
   // Each entry: { date, orders: [orderId], soldeAmigos, soldeAnnulation, paid }
@@ -253,7 +265,6 @@ userSchema.pre('findOneAndUpdate', function(next) {
 userSchema.index({ phoneNumber: 1 });
 userSchema.index({ isVerified: 1 });
 userSchema.index({ 'location.zone': 1 });
-userSchema.index({ securityCode: 1 });
 
 const User = mongoose.model('User', userSchema);
 

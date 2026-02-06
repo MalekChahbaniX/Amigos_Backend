@@ -11,6 +11,7 @@ router.get('/flouci-failure', paymentController.handleFlouciFailure);
 router.post('/initiate-clictopay', paymentController.initiateClickToPayPayment);
 router.get('/clictopay-success', paymentController.handleClickToPaySuccess);
 router.get('/clictopay-failure', paymentController.handleClickToPayFailure);
+router.get('/verify-clictopay/:orderId', paymentController.verifyClickToPayPayment);
 
 // Wallet balance route (optional but recommended)
 router.get('/wallet/balance', protect, async (req, res) => {

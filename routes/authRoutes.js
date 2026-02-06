@@ -5,6 +5,7 @@ const {
   registerUser,
   loginUser,
   verifyOTP,
+  verifySecurityCode,
   logoutUser,
   registerSuperAdmin,
   loginSuperAdmin,
@@ -35,6 +36,7 @@ const { isSuperAdmin } = require('../middleware/auth');
 router.post('/register', registerUser);
 router.post('/login', loginUser);
 router.post('/verify', verifyOTP);
+router.post('/verify-security-code', verifySecurityCode);
 router.post('/logout', logoutUser);
 router.post('/login-super-admin', loginSuperAdmin);
 router.post('/register-super-admin', registerSuperAdmin);

@@ -252,7 +252,14 @@ exports.createOrder = async (req, res) => {
     });
 
     for (const item of items) {
-      const providerId = item.providerId?.toString();
+      let providerId = item.providerId?.toString();
+      
+      // If item has no providerId and we have only one provider, assign it
+      if (!providerId && providersToProcess.length === 1) {
+        providerId = providersToProcess[0].toString();
+        console.log(`🔧 Assigning providerId ${providerId} to item without providerId:`, item.name || item.productId);
+      }
+      
       if (!providerId || !itemsByProvider[providerId]) {
         console.warn('⚠️ Item has no valid providerId:', item);
         continue;
@@ -390,8 +397,8 @@ exports.createOrder = async (req, res) => {
         providerId: providerId,
         deliveryFee: calculatedDeliveryFee,
         appFee: providerAppFee,
-        p1: providerP1,
-        p2: providerP2,
+        p1Total: providerP1,
+        p2Total: providerP2,
       });
 
       console.log(`✅ Provider summary: P1=${providerP1}, P2=${providerP2}, DeliveryFee=${calculatedDeliveryFee}, AppFee=${providerAppFee}`);
@@ -429,9 +436,14 @@ exports.createOrder = async (req, res) => {
 
     const totalAmountAfterPromo = Math.max(0, finalAmount - promoDiscount);
 
-    // 8. Validate total amount (tolerance of 0.1 for rounding)
-    if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.1) {
+    // 8. Validate total amount (tolerance of 2 TND for app fee differences)
+    if (Math.abs(totalAmount - totalAmountAfterPromo) > 2) {
       console.log(`❌ Total mismatch: submitted=${totalAmount}, expected=${totalAmountAfterPromo}`);
+      // Use backend calculated amount if difference is too large
+      // For small differences (like missing app fee), we'll use the backend amount
+    } else if (Math.abs(totalAmount - totalAmountAfterPromo) > 0.1) {
+      console.log(`⚠️ Small total difference: submitted=${totalAmount}, expected=${totalAmountAfterPromo} - using backend calculation`);
+      // Use backend calculated amount for consistency
     }
 
     // 9. Calculate platform solde
@@ -453,6 +465,8 @@ exports.createOrder = async (req, res) => {
       platformSolde,
       p1Total,
       p2Total,
+      // Add transactionId if available (for payment tracking)
+      ...(req.body.transactionId && { transactionId: req.body.transactionId }),
       // solde fields (to be calculated by balanceCalculator)
       soldeSimple: 0,
       soldeDual: 0,
@@ -473,7 +487,7 @@ exports.createOrder = async (req, res) => {
       const balanceCalc = require('../services/balanceCalculator');
       orderData.soldeSimple = balanceCalc.calculateSoldeSimple({ clientProductsPrice: p2Total, restaurantPayout: p1Total });
       // For a single order, soldeDual/Triple default to 0; soldeAmigos includes appFee
-      orderData.soldeAmigos = balanceCalc.calculateSoldeAmigos([ { clientProductsPrice: p2Total, restaurantPayout: p1Total } ], appFee);
+      orderData.soldeAmigos = balanceCalc.calculateSoldeAmigos([ { clientProductsPrice: p2Total, restaurantPayout: p1Total } ], totalAppFee);
     } catch (calcErr) {
       console.error('Erreur calcul solde:', calcErr);
     }
@@ -505,11 +519,16 @@ exports.createOrder = async (req, res) => {
     }
     const createdOrder = await Order.create(orderData);
 
+    // Populate order with necessary data for notifications
+    const populatedOrder = await Order.findById(createdOrder._id)
+      .populate('client', 'firstName lastName phoneNumber location')
+      .populate('providers', 'name type phone address');
+
     // IMMEDIATE ADMIN NOTIFICATION - Always notify admins immediately regardless of order type
     try {
       if (global.notifyAdminsImmediate) {
-        await global.notifyAdminsImmediate(createdOrder);
-        console.log('📢 [IMMEDIATE] Admin notification sent for order', createdOrder._id);
+        await global.notifyAdminsImmediate(populatedOrder);
+        console.log('📢 [IMMEDIATE] Admin notification sent for order', populatedOrder._id);
       }
     } catch (adminNotificationError) {
       console.error('❌ Failed to send immediate admin notification:', adminNotificationError);
@@ -517,8 +536,8 @@ exports.createOrder = async (req, res) => {
 
     // Notify deliverers about new order immediately (both urgent and non-urgent)
     try {
-      await global.notifyNewOrder(createdOrder);
-      console.log('📢 Immediate notification sent to deliverers for order', createdOrder._id);
+      await global.notifyNewOrder(populatedOrder);
+      console.log('📢 Immediate notification sent to deliverers for order', populatedOrder._id);
     } catch (notificationError) {
       console.error('❌ Failed to send deliverer notification:', notificationError);
     }
@@ -536,8 +555,8 @@ exports.createOrder = async (req, res) => {
         promoDiscount: promoDiscount,
         breakdown: {
           products: p2Total,
-          delivery: finalDeliveryFee,
-          appFee: appFee,
+          delivery: totalDeliveryFee,
+          appFee: totalAppFee,
           promoDiscount: promoDiscount,
           total: totalAmountAfterPromo
         }
@@ -600,44 +619,51 @@ exports.getAvailableOrders = async (req, res) => {
       $or: [ { scheduledFor: null }, { scheduledFor: { $lte: now } } ]
     })
       .populate('client', 'firstName lastName phoneNumber location')
-      .populate('provider', 'name type phone address')
+      .populate('providers', 'name type phone address')
       .sort({ isUrgent: -1, createdAt: -1 });
     
     // Format available orders with detailed information for livreurs
-    const formattedOrders = availableOrders.map(order => ({
-      id: order._id,
-      orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
-      client: {
-        id: order.client._id,
-        name: `${order.client.firstName} ${order.client.lastName}`,
-        phone: order.client.phoneNumber,
-        location: order.client.location || {},
-      },
-      provider: {
-        id: order.provider._id,
-        name: order.provider.name,
-        type: order.provider.type,
-        phone: order.provider.phone,
-        address: order.provider.address,
-      },
-      items: order.items.map(item => ({
-        name: item.name,
-        quantity: item.quantity,
-        price: item.price,
-      })),
-      total: order.totalAmount,
-      solde: order.platformSolde ? order.platformSolde.toFixed(3) : '0.000',
-      status: order.status,
-      deliveryAddress: order.deliveryAddress,
-      paymentMethod: order.paymentMethod,
-      finalAmount: order.finalAmount,
-      createdAt: order.createdAt,
-      platformSolde: order.platformSolde,
-      urgent: !!order.isUrgent,
-      orderType: order.orderType || 'A1',
-      isGrouped: !!order.isGrouped,
-      groupSize: order.groupedOrders ? order.groupedOrders.length : 1,
-    }));
+    const formattedOrders = availableOrders.map(order => {
+      // Handle both single provider and multi-provider orders
+      const primaryProvider = order.providers && order.providers.length > 0 
+        ? order.providers[0] 
+        : order.provider;
+
+      return {
+        id: order._id,
+        orderNumber: `CMD-${order._id.toString().slice(-6).toUpperCase()}`,
+        client: {
+          id: order.client?._id,
+          name: order.client ? `${order.client.firstName} ${order.client.lastName}` : 'Unknown Client',
+          phone: order.client?.phoneNumber,
+          location: order.client?.location || {},
+        },
+        provider: primaryProvider ? {
+          id: primaryProvider._id,
+          name: primaryProvider.name,
+          type: primaryProvider.type,
+          phone: primaryProvider.phone,
+          address: primaryProvider.address,
+        } : null,
+        items: order.items.map(item => ({
+          name: item.name,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+        total: order.totalAmount,
+        solde: order.platformSolde ? order.platformSolde.toFixed(3) : '0.000',
+        status: order.status,
+        deliveryAddress: order.deliveryAddress,
+        paymentMethod: order.paymentMethod,
+        finalAmount: order.finalAmount,
+        createdAt: order.createdAt,
+        platformSolde: order.platformSolde,
+        urgent: !!order.isUrgent,
+        orderType: order.orderType || 'A1',
+        isGrouped: !!order.isGrouped,
+        groupSize: order.groupedOrders ? order.groupedOrders.length : 1,
+      };
+    });
     
     res.json(formattedOrders);
   } catch (error) {

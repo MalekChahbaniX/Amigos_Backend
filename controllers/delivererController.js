@@ -946,6 +946,15 @@ exports.startSession = async (req, res) => {
       return res.status(403).json({ message: 'Accès refusé' });
     }
 
+    // Validate security code if provided
+    const { securityCode } = req.body;
+    if (securityCode) {
+      const deliverer = await User.findById(delivererId).select('securityCode');
+      if (!deliverer || deliverer.securityCode !== securityCode) {
+        return res.status(400).json({ message: 'Code de sécurité invalide' });
+      }
+    }
+
     // Prevent multiple active sessions for the same deliverer today
     const today = new Date();
     const startOfToday = new Date(today);

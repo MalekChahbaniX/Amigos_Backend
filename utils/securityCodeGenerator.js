@@ -66,8 +66,38 @@ const validateSecurityCode = (providedCode, storedCode) => {
   }
 };
 
+/**
+ * Generate a unique 4-digit security code for clients
+ * @param {number} maxRetries - Maximum retry attempts (default: 5)
+ * @returns {Promise<string>} A unique 4-digit security code
+ */
+const generateUniqueClientSecurityCode = async (maxRetries = 5) => {
+  let attempts = 0;
+  let codeExists = true;
+  let securityCode;
+
+  while (codeExists && attempts < maxRetries) {
+    securityCode = (Math.floor(Math.random() * 9000) + 1000).toString(); // 1000-9999
+    const existingCode = await User.findOne({
+      securityCode: securityCode,
+      role: 'client'
+    });
+    codeExists = !!existingCode;
+    attempts++;
+  }
+
+  if (codeExists) {
+    throw new Error(
+      `Impossible de générer un code de sécurité unique après ${maxRetries} tentatives.`
+    );
+  }
+
+  return securityCode;
+};
+
 module.exports = {
   generateUniqueSecurityCode,
   generateSecurityCode,
-  validateSecurityCode
+  validateSecurityCode,
+  generateUniqueClientSecurityCode
 };

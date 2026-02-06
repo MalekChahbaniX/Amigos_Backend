@@ -138,8 +138,8 @@ exports.initiateFlouciPayment = async (req, res) => {
 
     // Configure Flouci redirect URLs - Flouci requires valid HTTP URLs
     // The backend will receive these redirects and then redirect to the mobile deep link
-    const backendUrl = 'https://amigosdelivery25.com';
-    //const backendUrl = 'http://192.168.1.104:5000';
+    //const backendUrl = 'https://amigosdelivery25.com';
+    const backendUrl = 'http://192.168.1.104:5000';
     const successUrl = `${backendUrl}/api/payments/flouci-success`;
     const failureUrl = `${backendUrl}/api/payments/flouci-failure`;
     
@@ -812,6 +812,9 @@ exports.handleClickToPaySuccess = async (req, res) => {
     
     // CREATE ORDER if it doesn't exist already
     const Order = require('../models/Order');
+    // DISABLED: Order creation should be handled by frontend via orderController
+    // This old order creation uses deprecated schema and conflicts with new multi-provider system
+    /*
     let order = await Order.findOne({ transactionId: transaction._id });
 
     if (!order && transaction.details.orderDetails) {
@@ -840,6 +843,8 @@ exports.handleClickToPaySuccess = async (req, res) => {
     } else if (order) {
       console.log('ℹ️ Order already exists:', order._id);
     }
+    */
+    let order = null;
     
     // Build redirect parameters with authorization details
     const params = new URLSearchParams();
@@ -1027,5 +1032,75 @@ exports.handleClickToPayFailure = async (req, res) => {
     
     console.log('🔗 Redirecting to deep link (error):', deepLinkUrl);
     res.redirect(302, deepLinkUrl);
+  }
+};
+// Verify ClickToPay payment status
+exports.verifyClickToPayPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: "Order ID is required"
+      });
+    }
+
+    console.log("🔍 Verifying ClickToPay payment status for orderId:", orderId);
+
+    // Call ClickToPay API to verify payment status
+    const verificationResult = await clickToPayAPI.verifyPayment(orderId);
+
+    // Find the transaction in our database
+    const transaction = await Transaction.findOne({
+      "details.clickToPayOrderId": orderId
+    });
+
+    if (transaction) {
+      // Update transaction status based on verification
+      const statusMap = {
+        0: "pending",
+        1: "pending", 
+        2: "completed",
+        3: "cancelled",
+        4: "refunded",
+        5: "pending",
+        6: "failed"
+      };
+
+      transaction.status = statusMap[verificationResult.orderStatus] || "pending";
+      transaction.details.verificationResult = verificationResult;
+      transaction.details.lastVerifiedAt = new Date();
+      transaction.markModified("details");
+      await transaction.save();
+
+      console.log("✅ Transaction updated with verification result");
+    }
+
+    res.json({
+      success: true,
+      data: {
+        orderId: orderId,
+        orderStatus: verificationResult.orderStatus,
+        orderStatusName: verificationResult.orderStatusName || "Unknown",
+        amount: verificationResult.amount,
+        actionCode: verificationResult.actionCode,
+        actionCodeDescription: verificationResult.actionCodeDescription,
+        transactionId: transaction?._id,
+        transactionStatus: transaction?.status
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Error verifying ClickToPay payment:", error.message);
+    
+    res.status(500).json({
+      success: false,
+      message: "Error verifying payment status",
+      error: {
+        type: "VERIFICATION_ERROR",
+        message: error.message
+      }
+    });
   }
 };

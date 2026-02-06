@@ -95,7 +95,7 @@ exports.getProfile = async (req, res) => {
 // @access Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { firstName, lastName, email, phoneNumber, avatar } = req.body;
+    const { firstName, lastName, email, phoneNumber, avatar, securityCode } = req.body;
     const userId = req.user?.id || req.body.userId;
 
     if (!userId) {
@@ -126,6 +126,49 @@ exports.updateProfile = async (req, res) => {
       }
     }
 
+    // Validation du code de sécurité pour les clients
+    if (securityCode !== undefined) {
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: 'Utilisateur non trouvé' });
+      }
+
+      // Vérifier que c'est un client
+      if (user.role !== 'client') {
+        return res.status(400).json({ 
+          message: 'Le code de sécurité à 4 chiffres est réservé aux clients' 
+        });
+      }
+
+      // Valider le format (4 chiffres)
+      if (!/^\d{4}$/.test(securityCode)) {
+        return res.status(400).json({ 
+          message: 'Le code de sécurité doit être exactement 4 chiffres numériques' 
+        });
+      }
+
+      // Double-check: Verify code is exactly 4 digits for client role
+      if (securityCode.length !== 4 || isNaN(securityCode)) {
+        return res.status(400).json({ 
+          message: 'Le code de sécurité doit être exactement 4 chiffres numériques' 
+        });
+      }
+
+      // Vérifier l'unicité du code
+      const existingCode = await User.findOne({
+        securityCode: securityCode,
+        role: 'client',
+        _id: { $ne: userId }
+      });
+
+      if (existingCode) {
+        return res.status(400).json({ 
+          message: 'Ce code de sécurité est déjà utilisé. Veuillez en choisir un autre.' 
+        });
+      }
+    }
+
     const user = await User.findByIdAndUpdate(
       userId,
       {
@@ -133,9 +176,10 @@ exports.updateProfile = async (req, res) => {
         ...(lastName && { lastName }),
         ...(avatar !== undefined && { avatar }),
         ...(email && { email: email.toLowerCase() }),
-        ...(phoneNumber && { phoneNumber })
+        ...(phoneNumber && { phoneNumber }),
+        ...(securityCode !== undefined && { securityCode })
       },
-      { new: true }
+      { new: true, runValidators: true }
     ).select('firstName lastName avatar email phoneNumber role status');
 
     if (!user) {

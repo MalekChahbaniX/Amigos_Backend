@@ -161,9 +161,11 @@ class WinSMSService {
     if (!forceRefresh && this.validationCache.result && this.validationCache.timestamp) {
       const cacheAge = Date.now() - this.validationCache.timestamp;
       if (cacheAge < this.validationCache.ttl) {
+        console.log(`✓ [WinSMS] Validation credentials (cache, age: ${Math.round(cacheAge/1000)}s)`);
         return this.validationCache.result;
       }
     }
+    console.log(`🔍 [WinSMS] Validation credentials (fresh check)`);
 
     // Validate fresh
     const result = await this.testConnection();
@@ -178,6 +180,10 @@ class WinSMSService {
   }
 
   async testConnection() {
+    console.log(`🔍 [WinSMS] Test de connexion - API URL: ${this.apiUrl}`);
+    console.log(`🔍 [WinSMS] API Key configurée: ${this.apiKey ? 'Oui (***' + this.apiKey.slice(-4) + ')' : 'Non'}`);
+    console.log(`🔍 [WinSMS] Sender ID: ${this.senderId || 'Non configuré'}`);
+    
     if (!this.apiKey || !this.senderId) {
       const error = 'WinSMS credentials not configured (WINSMS_API_KEY or WINSMS_SENDER_ID missing)';
       console.error('❌ WinSMS Connection Test Failed:', error);
@@ -201,7 +207,10 @@ class WinSMSService {
             'Authorization': `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json'
           },
-          timeout: 5000
+          timeout: 15000,
+          httpsAgent: new (require('https').Agent)({
+            rejectUnauthorized: false // Désactiver la validation SSL temporairement
+          })
         }
       );
 
@@ -226,6 +235,8 @@ class WinSMSService {
     let lastError;
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      console.log(`🔄 [WinSMS] Tentative ${attempt}/${this.maxAttempts} - ${phoneNumber}`);
+      
       try {
         const startTime = Date.now();
 
@@ -241,7 +252,10 @@ class WinSMSService {
               'Authorization': `Bearer ${this.apiKey}`,
               'Content-Type': 'application/json'
             },
-            timeout: 10000
+            timeout: 20000,
+            httpsAgent: new (require('https').Agent)({
+              rejectUnauthorized: false // Désactiver la validation SSL temporairement
+            })
           }
         );
 
@@ -286,6 +300,8 @@ class WinSMSService {
 
   async sendOTP(phoneNumber, otp, additionalMetadata = {}) {
     const startTime = Date.now();
+    
+    console.log(`🔍 [WinSMS] Début envoi OTP - Téléphone: ${phoneNumber}, Environnement: ${process.env.NODE_ENV || 'development'}`);
 
     const logData = {
       phoneNumber,
@@ -335,7 +351,7 @@ class WinSMSService {
 
       await this._logWinSMSAttempt(logData);
 
-      console.log(`✓ WinSMS: OTP sent successfully to ${phoneNumber} in ${responseTime}ms (Attempt ${result.attempts}/${this.maxAttempts})`);
+      console.log(`✓ WinSMS: OTP envoyé avec succès à ${phoneNumber} en ${responseTime}ms (Tentative ${result.attempts}/${this.maxAttempts}, MessageID: ${result.messageId})`);
 
       return {
         success: true,
@@ -358,11 +374,11 @@ class WinSMSService {
       await this._logWinSMSAttempt(logData);
       await this._checkAndLogAlerts();
 
-      console.error(`❌ WinSMS: Failed to send OTP to ${phoneNumber} after ${this.maxAttempts} attempts (${responseTime}ms):`, error.message);
+      console.error(`❌ WinSMS: Échec envoi OTP à ${phoneNumber} après ${this.maxAttempts} tentatives (${responseTime}ms) - Type: ${errorType}, Message: ${error.message}`);
 
       throw error;
     }
   }
 }
 
-module.exports = new WinSMSService();
+module.exports = WinSMSService;

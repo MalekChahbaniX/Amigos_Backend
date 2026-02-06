@@ -8,6 +8,61 @@ const bcrypt = require('bcryptjs');
 const SMSRouterService = require('../services/smsRouterService');
 const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
 
+/**
+ * Extrait le message d'erreur approprié pour les erreurs de clé dupliquée MongoDB
+ * @param {Error} error - L'erreur MongoDB
+ * @returns {Object} - { field: string, message: string, statusCode: number }
+ */
+function getDuplicateKeyErrorMessage(error) {
+  const keyPattern = error.keyPattern || {};
+  const keyValue = error.keyValue || {};
+  
+  // Identifier le champ en conflit
+  const conflictField = Object.keys(keyPattern)[0];
+  const conflictValue = keyValue[conflictField];
+  
+  console.error('❌ [E11000] Détails du conflit:', {
+    field: conflictField,
+    value: conflictValue,
+    keyPattern,
+    keyValue
+  });
+  
+  switch (conflictField) {
+    case 'securityCode':
+      return {
+        field: 'securityCode',
+        message: 'Erreur système : code de sécurité en conflit. Veuillez réessayer.',
+        statusCode: 500,
+        canRetry: true
+      };
+      
+    case 'phoneNumber':
+      return {
+        field: 'phoneNumber',
+        message: 'Ce numéro de téléphone est déjà associé à un compte',
+        statusCode: 400,
+        canRetry: false
+      };
+      
+    case 'email':
+      return {
+        field: 'email',
+        message: 'Cet email est déjà utilisé',
+        statusCode: 400,
+        canRetry: false
+      };
+      
+    default:
+      return {
+        field: conflictField || 'unknown',
+        message: 'Une erreur de duplication s\'est produite',
+        statusCode: 400,
+        canRetry: false
+      };
+  }
+}
+
 // Fonction pour mapper les erreurs SMS (Twilio et WinSMS) en messages utilisateur
 const getOTPErrorMessage = (error) => {
     const provider = error.provider || 'unknown';
@@ -174,6 +229,35 @@ exports.loginUser = async (req, res) => {
     if (!user) {
       // Créer un nouvel utilisateur s'il n'existe pas
       console.log('Création d\'un nouveau utilisateur pour:', phoneNumber);
+      console.log('📋 [loginUser] Tentative création utilisateur:', { 
+        phoneNumber, 
+        role: 'client',
+        timestamp: new Date().toISOString()
+      });
+      
+      // Vérification préventive améliorée
+      try {
+        const existingUser = await User.findOne({ phoneNumber });
+        if (existingUser) {
+          console.log('⚠️ [loginUser] Utilisateur existe déjà avec rôle différent:', {
+            phoneNumber,
+            existingRole: existingUser.role,
+            existingId: existingUser._id
+          });
+          return res.status(400).json({
+            message: `Ce numéro est déjà utilisé pour un compte de type ${existingUser.role || 'utilisateur'}`,
+            field: 'phoneNumber',
+            canRetry: false
+          });
+        }
+      } catch (checkError) {
+        console.error('❌ [loginUser] Erreur vérification préventive:', checkError);
+        return res.status(500).json({
+          message: 'Erreur lors de la vérification du numéro de téléphone',
+          canRetry: true
+        });
+      }
+      
       try {
         user = await User.create({
           phoneNumber,
@@ -186,10 +270,55 @@ exports.loginUser = async (req, res) => {
             address: 'Tunis, Tunisia'
           }
         });
-        console.log('Nouvel utilisateur créé avec ID:', user._id);
+        console.log('✅ [loginUser] Nouvel utilisateur créé avec ID:', user._id);
       } catch (createError) {
-        console.error('Erreur création utilisateur:', createError);
-        return res.status(500).json({ message: 'Erreur lors de la création du compte' });
+        console.error('❌ [loginUser] Erreur création utilisateur:', {
+          error: createError,
+          code: createError.code,
+          message: createError.message,
+          stack: createError.stack,
+          phoneNumber,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Gestion spécifique des erreurs E11000
+        if (createError.code === 11000) {
+          const errorInfo = getDuplicateKeyErrorMessage(createError);
+          
+          // Cas spécial pour securityCode null - indique un problème d'index
+          if (errorInfo.field === 'securityCode' && createError.keyValue?.securityCode === null) {
+            console.error('🚨 [loginUser] ERREUR CRITIQUE: Index securityCode non-sparse détecté!');
+            console.error('🚨 [loginUser] ACTION REQUISE: Relancer le script de migration fixSecurityCodeIndex.js');
+          }
+          
+          return res.status(errorInfo.statusCode).json({
+            message: errorInfo.message,
+            field: errorInfo.field,
+            canRetry: errorInfo.canRetry,
+            error: process.env.NODE_ENV === 'development' ? createError.message : undefined
+          });
+        }
+        
+        // Autres erreurs MongoDB
+        if (createError.name === 'MongoError' || createError.name === 'MongoServerError') {
+          console.error('❌ [loginUser] Erreur MongoDB:', {
+            name: createError.name,
+            code: createError.code,
+            errorLabels: createError.errorLabels
+          });
+          return res.status(500).json({
+            message: 'Erreur de base de données lors de la création du compte',
+            canRetry: true,
+            error: process.env.NODE_ENV === 'development' ? createError.message : undefined
+          });
+        }
+        
+        // Erreurs générales
+        return res.status(500).json({
+          message: 'Erreur lors de la création du compte',
+          canRetry: true,
+          error: process.env.NODE_ENV === 'development' ? createError.message : undefined
+        });
       }
     }
 
@@ -197,11 +326,27 @@ exports.loginUser = async (req, res) => {
     console.log('Statut de vérification:', user.isVerified);
 
     if (user.isVerified) {
-      // Si l'utilisateur est déjà vérifié, connexion directe
+      // Vérifier si l'utilisateur a un code de sécurité
+      if (user.securityCode && user.role === 'client') {
+        console.log('Utilisateur vérifié avec code de sécurité, redirection vers SecurityCodeScreen');
+        return res.status(200).json({
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phoneNumber: user.phoneNumber,
+          role: user.role,
+          isVerified: true,
+          hasSecurityCode: true,
+          message: 'Code de sécurité requis'
+        });
+      }
+      
+      // Si l'utilisateur est déjà vérifié sans code de sécurité, connexion directe
       console.log('Utilisateur déjà vérifié, connexion directe');
       return res.status(200).json({
         _id: user._id,
         firstName: user.firstName,
+        lastName: user.lastName,
         phoneNumber: user.phoneNumber,
         role: user.role,
         isVerified: true,
@@ -360,6 +505,116 @@ exports.verifyOTP = async (req, res) => {
   }
 };
 
+// @desc    Vérifier le code de sécurité client
+// @route   POST /api/auth/verify-security-code
+// @access  Public
+exports.verifySecurityCode = async (req, res) => {
+  const { phoneNumber, securityCode } = req.body;
+
+  try {
+    console.log('=== DEBUT VERIFICATION CODE SECURITE CLIENT ===');
+    console.log('Vérification pour:', phoneNumber);
+
+    // Validation des paramètres
+    if (!phoneNumber || !securityCode) {
+      return res.status(400).json({ 
+        message: 'Numéro de téléphone et code de sécurité requis' 
+      });
+    }
+
+    // Vérifier si l'utilisateur existe
+    const user = await User.findOne({ phoneNumber, role: 'client' });
+    
+    if (!user) {
+      console.log('Utilisateur non trouvé');
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+
+    // Vérifier si l'utilisateur est vérifié
+    if (!user.isVerified) {
+      return res.status(400).json({ 
+        message: 'Compte non vérifié. Veuillez d\'abord vérifier votre numéro de téléphone.' 
+      });
+    }
+
+    // Vérifier si l'utilisateur a un code de sécurité
+    if (!user.securityCode) {
+      return res.status(400).json({ 
+        message: 'Aucun code de sécurité configuré pour ce compte' 
+      });
+    }
+
+    // === SECURITY CODE VALIDATION WITH RATE LIMITING ===
+    
+    // Vérifier si le compte est verrouillé
+    if (user.securityCodeLockedUntil && new Date() < user.securityCodeLockedUntil) {
+      const minutesRemaining = Math.ceil(
+        (user.securityCodeLockedUntil - new Date()) / (1000 * 60)
+      );
+      console.warn(`⚠️ [Security] Client ${user._id} verrouillé jusqu'à ${user.securityCodeLockedUntil}`);
+      return res.status(429).json({
+        message: `Trop de tentatives. Réessayez dans ${minutesRemaining} minutes.`
+      });
+    }
+
+    // Valider le code de sécurité
+    const { validateSecurityCode } = require('../utils/securityCodeGenerator');
+    
+    if (!validateSecurityCode(securityCode, user.securityCode)) {
+      // Incrémenter les tentatives échouées
+      user.failedSecurityCodeAttempts = (user.failedSecurityCodeAttempts || 0) + 1;
+      console.warn(`⚠️ [Security] Code invalide pour client ${user._id}. Tentatives: ${user.failedSecurityCodeAttempts}`);
+
+      // Verrouiller après 5 tentatives échouées pour 15 minutes
+      if (user.failedSecurityCodeAttempts >= 5) {
+        user.securityCodeLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+        console.warn(`🔒 [Security] Client ${user._id} verrouillé jusqu'à ${user.securityCodeLockedUntil}`);
+      }
+
+      await user.save({ validateBeforeSave: false });
+      return res.status(401).json({
+        message: 'Code de sécurité incorrect',
+        attemptsRemaining: Math.max(0, 5 - user.failedSecurityCodeAttempts)
+      });
+    }
+
+    // Code de sécurité validé avec succès - réinitialiser les compteurs
+    console.log(`✅ [Security] Code de sécurité validé pour client ${user._id}`);
+    if (user.failedSecurityCodeAttempts > 0) {
+      user.failedSecurityCodeAttempts = 0;
+    }
+    if (user.securityCodeLockedUntil) {
+      user.securityCodeLockedUntil = null;
+    }
+    await user.save({ validateBeforeSave: false });
+
+    // === END SECURITY CODE VALIDATION ===
+
+    // Générer le token JWT
+    const token = generateToken(user._id);
+
+    console.log('✅ Connexion réussie avec code de sécurité');
+    return res.status(200).json({
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      phoneNumber: user.phoneNumber,
+      role: user.role,
+      isVerified: user.isVerified,
+      token,
+      message: 'Connexion réussie'
+    });
+
+  } catch (error) {
+    console.error('=== ERREUR VERIFICATION CODE SECURITE ===');
+    console.error('Erreur complète:', error);
+    res.status(500).json({ 
+      message: 'Erreur serveur lors de la vérification',
+      error: error.message
+    });
+  }
+};
+
 // @desc    Déconnecter un utilisateur
 // @route   POST /api/auth/logout
 // @access  Private (requires token)
@@ -428,11 +683,53 @@ exports.registerUser = async (req, res) => {
       res.status(400).json({ message: 'Données utilisateur invalides' });
     }
   } catch (error) {
-    console.error('=== ERREUR REGISTER ===');
-    console.error('Erreur complète:', error);
+    console.error('❌ [registerUser] Erreur création utilisateur:', {
+      error: error,
+      code: error.code,
+      message: error.message,
+      stack: error.stack,
+      phoneNumber,
+      firstName,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Gestion spécifique des erreurs E11000
+    if (error.code === 11000) {
+      const errorInfo = getDuplicateKeyErrorMessage(error);
+      
+      // Cas spécial pour securityCode null - indique un problème d'index
+      if (errorInfo.field === 'securityCode' && error.keyValue?.securityCode === null) {
+        console.error('🚨 [registerUser] ERREUR CRITIQUE: Index securityCode non-sparse détecté!');
+        console.error('🚨 [registerUser] ACTION REQUISE: Relancer le script de migration fixSecurityCodeIndex.js');
+      }
+      
+      return res.status(errorInfo.statusCode).json({
+        message: errorInfo.message,
+        field: errorInfo.field,
+        canRetry: errorInfo.canRetry,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+    
+    // Autres erreurs MongoDB
+    if (error.name === 'MongoError' || error.name === 'MongoServerError') {
+      console.error('❌ [registerUser] Erreur MongoDB:', {
+        name: error.name,
+        code: error.code,
+        errorLabels: error.errorLabels
+      });
+      return res.status(500).json({
+        message: 'Erreur de base de données lors de la création du compte',
+        canRetry: true,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+    
+    // Erreurs générales
     res.status(500).json({
-      message: 'Erreur serveur',
-      error:   error.message
+      message: 'Erreur serveur lors de la création du compte',
+      canRetry: true,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -674,11 +971,64 @@ exports.registerDeliverer = async (req, res) => {
       res.status(400).json({ message: 'Données livreur invalides' });
     }
   } catch (error) {
-    console.error('=== ERREUR REGISTER DELIVERER ===');
-    console.error('Erreur complète:', error);
+    console.error('❌ [registerDeliverer] Erreur création livreur:', {
+      error: error,
+      code: error.code,
+      message: error.message,
+      stack: error.stack,
+      phoneNumber,
+      firstName,
+      lastName,
+      email,
+      vehicle,
+      securityCode: securityCode || 'non-généré',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Gestion spécifique des erreurs E11000
+    if (error.code === 11000) {
+      const errorInfo = getDuplicateKeyErrorMessage(error);
+      
+      // Cas spécial pour securityCode - très important pour les livreurs
+      if (errorInfo.field === 'securityCode') {
+        console.error('🚨 [registerDeliverer] Conflit de code de sécurité détecté!');
+        console.error('🚨 [registerDeliverer] Code en conflit:', error.keyValue?.securityCode);
+        console.error('🚨 [registerDeliverer] ACTION: Vérifier l\'unicité des codes ou relancer la génération');
+      }
+      
+      // Cas spécial pour securityCode null - indique un problème d'index
+      if (errorInfo.field === 'securityCode' && error.keyValue?.securityCode === null) {
+        console.error('🚨 [registerDeliverer] ERREUR CRITIQUE: Index securityCode non-sparse détecté!');
+        console.error('🚨 [registerDeliverer] ACTION REQUISE: Relancer le script de migration fixSecurityCodeIndex.js');
+      }
+      
+      return res.status(errorInfo.statusCode).json({
+        message: errorInfo.message,
+        field: errorInfo.field,
+        canRetry: errorInfo.canRetry,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+    
+    // Autres erreurs MongoDB
+    if (error.name === 'MongoError' || error.name === 'MongoServerError') {
+      console.error('❌ [registerDeliverer] Erreur MongoDB:', {
+        name: error.name,
+        code: error.code,
+        errorLabels: error.errorLabels
+      });
+      return res.status(500).json({
+        message: 'Erreur de base de données lors de la création du compte livreur',
+        canRetry: true,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+    
+    // Erreurs générales
     res.status(500).json({
       message: 'Erreur serveur lors de la création du livreur',
-      error:   error.message
+      canRetry: true,
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -1601,7 +1951,8 @@ exports.testOTPService = async (req, res) => {
 // Test WinSMS Connection (connection check only, no SMS sent)
 exports.testWinSMSConnection = async (req, res) => {
   try {
-    const winSmsService = require('../services/winSmsService');
+    const WinSMSService = require('../services/winSmsService');
+    const winSmsService = new WinSMSService();
     
     const connectionTest = await winSmsService.testConnection();
     
@@ -1628,7 +1979,8 @@ exports.testWinSMSConnection = async (req, res) => {
 exports.checkWinSMSServiceHealth = async (req, res) => {
   try {
     const WinSMSLog = require('../models/WinSMSLog');
-    const winSmsService = require('../services/winSmsService');
+    const WinSMSService = require('../services/winSmsService');
+    const winSmsService = new WinSMSService();
     
     // Test connection
     const connectionTest = await winSmsService.testConnection();
@@ -1751,7 +2103,8 @@ exports.getWinSMSMetrics = async (req, res) => {
 exports.getWinSMSServiceStatus = async (req, res) => {
   try {
     const WinSMSLog = require('../models/WinSMSLog');
-    const winSmsService = require('../services/winSmsService');
+    const WinSMSService = require('../services/winSmsService');
+    const winSmsService = new WinSMSService();
     
     const connectionTest = await winSmsService.testConnection();
     
@@ -1819,7 +2172,8 @@ exports.getWinSMSServiceStatus = async (req, res) => {
 exports.testWinSMSService = async (req, res) => {
   try {
     const WinSMSLog = require('../models/WinSMSLog');
-    const winSmsService = require('../services/winSmsService');
+    const WinSMSService = require('../services/winSmsService');
+    const winSmsService = new WinSMSService();
     
     const { phoneNumber } = req.body;
     
@@ -1871,7 +2225,8 @@ exports.testWinSMSService = async (req, res) => {
 exports.getSMSDashboard = async (req, res) => {
   try {
     const WinSMSLog = require('../models/WinSMSLog');
-    const winSmsService = require('../services/winSmsService');
+    const WinSMSService = require('../services/winSmsService');
+    const winSmsService = new WinSMSService();
     
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2066,8 +2421,14 @@ exports.updateAdmin = async (req, res) => {
 
     // Gérer les erreurs de clé dupliquée MongoDB
     if (error.code === 11000) {
-      return res.status(400).json({
-        message: 'Cet email est déjà utilisé par un autre utilisateur'
+      const errorInfo = getDuplicateKeyErrorMessage(error);
+      console.error('❌ [updateAdmin] Erreur E11000:', errorInfo);
+      
+      return res.status(errorInfo.statusCode).json({
+        message: errorInfo.message,
+        field: errorInfo.field,
+        canRetry: errorInfo.canRetry,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
 
