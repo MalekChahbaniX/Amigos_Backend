@@ -9,9 +9,12 @@ const {
   getDelivererEarnings,
   getDelivererProfile,
   updateDelivererLocation,
+  updateDelivererPushToken,
   logoutDeliverer,
   startSession,
   stopSession,
+  pauseSession,
+  resumeSession,
   getDelivererStatistics
 } = require('../controllers/delivererController');
 const { getDelivererSessions } = require('../controllers/delivererController');
@@ -46,10 +49,15 @@ router.get('/daily-balance', isDeliverer, checkDelivererSession, require('../con
 router.post('/pay-balance', isDeliverer, checkDelivererSession, require('../controllers/delivererController').payDailyBalance);
 router.get('/profile', isDeliverer, checkDelivererSession, getDelivererProfile);
 router.put('/profile/location', isDeliverer, checkDelivererSession, updateDelivererLocation);
+router.put('/profile/push-token', isDeliverer, checkDelivererSession, updateDelivererPushToken);
 // Allow logout without requiring an active session (deliverer should be able to logout even if session expired)
 router.post('/logout', isDeliverer, logoutDeliverer);
 
 // End session
 router.post('/session/stop', isDeliverer, stopSession);
+
+// Pause/Resume session
+router.post('/session/pause', isDeliverer, pauseSession);
+router.post('/session/resume', isDeliverer, resumeSession);
 
 module.exports = router;

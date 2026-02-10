@@ -427,7 +427,7 @@ global.scheduleOrderAutoCancellation = function(orderId, delayMs = 600000) {
         order.cancelledAt = now;
         order.autoCancelledAt = now;
         order.autoCancel = true;
-        order.cancellationReason = 'Auto-annulation: aucun livreur n\'a accepté dans les 10 minutes';
+        order.cancellationReason = 'Auto-annulation: aucun livreur n\'a accepté dans les 20 minutes';
         
         await order.save();
         
@@ -446,7 +446,7 @@ global.scheduleOrderAutoCancellation = function(orderId, delayMs = 600000) {
           console.error(`⚠️ Failed to create cancellation record for order ${orderId}:`, recordError);
         }
         
-        console.log(`⏰ Order ${orderId} auto-cancelled after 10 minutes`);
+        console.log(`⏰ Order ${orderId} auto-cancelled after 20 minutes`);
       }
       
       // Remove timer from map

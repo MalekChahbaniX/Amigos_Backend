@@ -87,6 +87,22 @@ async function findGroupingCandidates(minutesBack = 20) {
  */
 async function groupOrdersIntoA2(order1, order2) {
   try {
+    // Vérifier que les deux commandes ont des providers valides
+    if (!order1.provider || !order2.provider) {
+      console.warn('⚠️ Missing provider data for A2 grouping');
+      return null;
+    }
+    
+    if (!order1.provider.location || !order2.provider.location) {
+      console.warn('⚠️ Missing provider location for A2 grouping');
+      return null;
+    }
+    
+    if (!order1.deliveryAddress || !order2.deliveryAddress) {
+      console.warn('⚠️ Missing delivery address for A2 grouping');
+      return null;
+    }
+    
     // Verify distance constraints
     const providersClose = areProvidersClose(order1.provider.location, order2.provider.location);
     // COMMENT 2: Check delivery-to-delivery distance, not client-to-delivery
@@ -136,6 +152,22 @@ async function groupOrdersIntoA2(order1, order2) {
  */
 async function groupOrdersIntoA3(order1, order2, order3) {
   try {
+    // Vérifier que les trois commandes ont des providers valides
+    if (!order1.provider || !order2.provider || !order3.provider) {
+      console.warn('⚠️ Missing provider data for A3 grouping');
+      return null;
+    }
+    
+    if (!order1.provider.location || !order2.provider.location || !order3.provider.location) {
+      console.warn('⚠️ Missing provider location for A3 grouping');
+      return null;
+    }
+    
+    if (!order1.deliveryAddress || !order2.deliveryAddress || !order3.deliveryAddress) {
+      console.warn('⚠️ Missing delivery address for A3 grouping');
+      return null;
+    }
+    
     // Verify distance constraints for all pairs
     const providersClose12 = areProvidersClose(order1.provider.location, order2.provider.location);
     const providersClose13 = areProvidersClose(order1.provider.location, order3.provider.location);

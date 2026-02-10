@@ -3,6 +3,42 @@ const Session = require('../models/Session');
 const Order = require('../models/Order');
 const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
 
+/**
+ * Normalise un numéro de téléphone tunisien
+ * @param {string} phone - Le numéro de téléphone à normaliser
+ * @returns {string|null} - Le numéro normalisé au format +216XXXXXXXX ou null si invalide
+ */
+function normalizePhoneNumber(phone) {
+  if (!phone || typeof phone !== 'string') {
+    return null;
+  }
+
+  // Supprimer tous les caractères non numériques sauf le +
+  let cleaned = phone.replace(/[^\d+]/g, '');
+
+  // Si le numéro commence déjà par +216, valider le format
+  if (cleaned.startsWith('+216')) {
+    // Vérifier que le reste fait 8 chiffres
+    const rest = cleaned.substring(4);
+    if (/^\d{8}$/.test(rest)) {
+      return cleaned;
+    }
+    return null;
+  }
+
+  // Si le numéro commence par 216, ajouter le +
+  if (cleaned.startsWith('216') && cleaned.length === 11) {
+    return '+' + cleaned;
+  }
+
+  // Si le numéro fait 8 chiffres, ajouter +216
+  if (/^\d{8}$/.test(cleaned)) {
+    return '+216' + cleaned;
+  }
+
+  return null;
+}
+
 // @desc    Get all deliverers with optional search and pagination
 // @route   GET /api/deliverers
 // @access  Private (Super Admin only)
@@ -134,20 +170,27 @@ exports.createDeliverer = async (req, res) => {
       });
     }
 
+    // Normalize phone number
+    const normalizedPhone = normalizePhoneNumber(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        message: 'Numéro de téléphone invalide. Format requis: +216XXXXXXXX ou 28653000'
+      });
+    }
+
     // Split name into firstName and lastName
     const nameParts = name.trim().split(' ');
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    // Check if deliverer already exists
-    const existingDeliverer = await User.findOne({
-      phoneNumber: phone,
-      role: 'deliverer'
+    // Check if any user already exists with this phone number
+    const existingUser = await User.findOne({
+      phoneNumber: normalizedPhone
     });
 
-    if (existingDeliverer) {
+    if (existingUser) {
       return res.status(400).json({
-        message: 'Un livreur avec ce téléphone existe déjà'
+        message: `Ce numéro de téléphone est déjà utilisé pour un compte de type ${existingUser.role || 'utilisateur'}`
       });
     }
 
@@ -167,7 +210,7 @@ exports.createDeliverer = async (req, res) => {
     const newDelivererData = {
       firstName,
       lastName,
-      phoneNumber: phone,
+      phoneNumber: normalizedPhone,
       securityCode: securityCode,
       role: 'deliverer',
       status: 'active',

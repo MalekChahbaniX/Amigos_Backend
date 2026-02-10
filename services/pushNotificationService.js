@@ -1,5 +1,6 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
+const User = require('../models/User');
 
 dotenv.config();
 
@@ -70,10 +71,44 @@ async function sendExpoPushNotification(token, title, body, data = {}) {
     });
 
     console.log('✅ Expo notification sent:', response.data);
+    
+    // Vérifier si le token est invalide et le nettoyer
+    if (response.data.data && response.data.data.status === 'error') {
+      const error = response.data.data.details?.error;
+      if (error === 'DeviceNotRegistered') {
+        console.warn(`🗑️ Token Expo invalide, nettoyage: ${token}`);
+        await cleanupInvalidToken(token);
+      }
+    }
+    
     return { success: true, data: response.data };
   } catch (error) {
     console.error('❌ Expo notification failed:', error.response?.data || error.message);
+    
+    // Nettoyer les tokens invalides en cas d'erreur
+    if (error.response?.data?.data?.details?.error === 'DeviceNotRegistered') {
+      await cleanupInvalidToken(token);
+    }
+    
     return { success: false, error: error.response?.data || error.message };
+  }
+}
+
+/**
+ * Nettoyer un token invalide de la base de données
+ */
+async function cleanupInvalidToken(invalidToken) {
+  try {
+    const result = await User.updateOne(
+      { pushToken: invalidToken },
+      { $unset: { pushToken: '' } }
+    );
+    
+    if (result.modifiedCount > 0) {
+      console.log(`🧹 Token invalide nettoyé: ${invalidToken}`);
+    }
+  } catch (cleanupError) {
+    console.error('❌ Erreur lors du nettoyage du token:', cleanupError);
   }
 }
 

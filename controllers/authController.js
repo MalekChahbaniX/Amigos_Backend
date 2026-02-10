@@ -1085,6 +1085,33 @@ exports.loginDeliverer = async (req, res) => {
     if (!deliverer) {
       // Créer un nouveau livreur s'il n'existe pas
       console.log('Création d\'un nouveau livreur pour:', phoneNumber);
+      
+      // Vérifier si un utilisateur avec un autre rôle existe déjà avec ce numéro
+      try {
+        const existingUser = await User.findOne({ 
+          $or: [{ phoneNumber: rawPhone }, { phoneNumber: normalizedPhone }] 
+        });
+        
+        if (existingUser) {
+          console.log('⚠️ [loginDeliverer] Numéro utilisé par un autre rôle:', {
+            phoneNumber: normalizedPhone,
+            existingRole: existingUser.role,
+            existingId: existingUser._id
+          });
+          return res.status(400).json({
+            message: `Ce numéro est déjà utilisé pour un compte de type ${existingUser.role || 'utilisateur'}`,
+            field: 'phoneNumber',
+            canRetry: false
+          });
+        }
+      } catch (checkError) {
+        console.error('❌ [loginDeliverer] Erreur vérification préventive:', checkError);
+        return res.status(500).json({
+          message: 'Erreur lors de la vérification du numéro de téléphone',
+          canRetry: true
+        });
+      }
+      
       try {
         // Generate unique security code for new deliverer
         const newSecurityCode = await generateUniqueSecurityCode('deliverer', 5);
@@ -1102,6 +1129,18 @@ exports.loginDeliverer = async (req, res) => {
         console.log('Nouveau livreur créé avec ID:', deliverer._id);
       } catch (createError) {
         console.error('Erreur création livreur:', createError);
+        
+        // Gestion spécifique des erreurs E11000
+        if (createError.code === 11000) {
+          const errorInfo = getDuplicateKeyErrorMessage(createError);
+          return res.status(errorInfo.statusCode).json({
+            message: errorInfo.message,
+            field: errorInfo.field,
+            canRetry: errorInfo.canRetry,
+            error: process.env.NODE_ENV === 'development' ? createError.message : undefined
+          });
+        }
+        
         return res.status(500).json({ message: 'Erreur lors de la création du compte livreur' });
       }
     }

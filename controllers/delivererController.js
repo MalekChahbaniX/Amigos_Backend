@@ -82,17 +82,26 @@ exports.getDelivererAvailableOrders = async (req, res) => {
     const delivererId = req.user.id;
     
     const now = new Date();
+    // Inclure les commandes des 20 dernières minutes qui sont toujours pending
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000);
+    
     // PROTECTION WINDOW: Only show orders where:
     // 1. protectionEnd <= now (protection expired), OR
     // 2. isUrgent: true (urgent orders bypass protection)
+    // 3. Created within last 20 minutes and still pending
     const availableOrders = await Order.find({
       status: 'pending',
       deliveryDriver: null,
-      $or: [
-        { $and: [{ protectionEnd: { $lte: now } }, { isUrgent: false }] },  // Non-urgent orders after protection
-        { $and: [{ isUrgent: true }, { protectionEnd: { $lte: now } }] }     // Urgent orders (but still respect protection if it exists)
-      ],
-      $or: [ { scheduledFor: null }, { scheduledFor: { $lte: now } } ]
+      $and: [
+        {
+          $or: [
+            { $and: [{ protectionEnd: { $lte: now } }, { isUrgent: false }] },  // Non-urgent orders after protection
+            { $and: [{ isUrgent: true }, { protectionEnd: { $lte: now } }] },     // Urgent orders (but still respect protection if it exists)
+            { $and: [{ createdAt: { $gte: twentyMinutesAgo } }, { isUrgent: false }] } // Recent orders within 20 minutes
+          ]
+        },
+        { $or: [ { scheduledFor: null }, { scheduledFor: { $lte: now } } ] }
+      ]
     })
       .populate('client', 'firstName lastName phoneNumber location')
       .populate('provider', 'name type phone address')
@@ -160,7 +169,9 @@ exports.getDelivererAvailableOrders = async (req, res) => {
 exports.acceptOrder = async (req, res) => {
   const { orderId } = req.params;
   const delivererId = req.user.id;
-
+  
+  console.log('🎯 Accept order request:', { orderId, delivererId });
+  
   try {
     // Fetch deliverer with their active orders count
     const deliverer = await User.findById(delivererId);
@@ -175,6 +186,10 @@ exports.acceptOrder = async (req, res) => {
       .populate('client', 'firstName lastName phoneNumber location')
       .populate('provider', 'name type phone address location')
       .populate('zone');
+    
+    console.log('🎯 Found order:', order ? order._id : 'null');
+    console.log('🎯 Order client:', order?.client);
+    console.log('🎯 Order provider:', order?.provider);
     
     if (!order) {
       return res.status(404).json({
@@ -864,6 +879,59 @@ exports.getDelivererProfile = async (req, res) => {
   }
 };
 
+// @desc    Update deliverer push token
+// @route   PUT /api/deliverers/profile/push-token
+// @access  Private (deliverer)
+exports.updateDelivererPushToken = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    const { pushToken } = req.body;
+    
+    if (!pushToken) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Push token est requis' 
+      });
+    }
+
+    // Valider le format du token Expo
+    if (!pushToken.startsWith('ExponentPushToken[') || !pushToken.endsWith(']')) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Format du token Expo invalide' 
+      });
+    }
+
+    const deliverer = await User.findById(delivererId);
+    
+    if (!deliverer || deliverer.role !== 'deliverer') {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Profil livreur non trouvé' 
+      });
+    }
+
+    // Mettre à jour le token
+    deliverer.pushToken = pushToken;
+    await deliverer.save();
+
+    console.log(`📱 Token Expo mis à jour pour le livreur ${delivererId}: ${pushToken}`);
+
+    res.json({
+      success: true,
+      message: 'Token Expo mis à jour avec succès',
+      pushToken: deliverer.pushToken
+    });
+  } catch (error) {
+    console.error('Error in updateDelivererPushToken:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Erreur serveur',
+      error: error.message
+    });
+  }
+};
+
 // @desc    Update deliverer location
 // @route   PUT /api/deliverers/profile/location
 // @access  Private (deliverer)
@@ -1009,6 +1077,78 @@ exports.startSession = async (req, res) => {
     res.status(200).json({ success: true, message: 'Session démarrée', session: session });
   } catch (error) {
     console.error('Error in startSession:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Pause deliverer session
+// @route   POST /api/deliverers/session/pause
+// @access  Private (deliverer)
+exports.pauseSession = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    if (!req.user || req.user.role !== 'deliverer') {
+      return res.status(403).json({ message: 'Accès refusé' });
+    }
+
+    const deliverer = await User.findById(delivererId).select('+currentSession +sessionDate +sessionActive');
+
+    if (!deliverer || !deliverer.currentSession) {
+      return res.status(400).json({ success: false, message: 'Aucune session active à mettre en pause' });
+    }
+
+    const session = await Session.findById(deliverer.currentSession);
+    if (!session || !session.active) {
+      return res.status(400).json({ success: false, message: 'Session non trouvée ou déjà terminée' });
+    }
+
+    // Mettre en pause la session
+    session.paused = true;
+    session.pauseTime = new Date();
+    await session.save();
+
+    // Mettre à jour le statut du livreur
+    await User.findByIdAndUpdate(delivererId, { status: 'paused' });
+
+    res.status(200).json({ success: true, message: 'Session mise en pause', session: session });
+  } catch (error) {
+    console.error('Error in pauseSession:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Resume deliverer session
+// @route   POST /api/deliverers/session/resume
+// @access  Private (deliverer)
+exports.resumeSession = async (req, res) => {
+  try {
+    const delivererId = req.user.id;
+    if (!req.user || req.user.role !== 'deliverer') {
+      return res.status(403).json({ message: 'Accès refusé' });
+    }
+
+    const deliverer = await User.findById(delivererId).select('+currentSession +sessionDate +sessionActive');
+
+    if (!deliverer || !deliverer.currentSession) {
+      return res.status(400).json({ success: false, message: 'Aucune session active à reprendre' });
+    }
+
+    const session = await Session.findById(deliverer.currentSession);
+    if (!session || !session.active) {
+      return res.status(400).json({ success: false, message: 'Session non trouvée ou déjà terminée' });
+    }
+
+    // Reprendre la session
+    session.paused = false;
+    session.resumeTime = new Date();
+    await session.save();
+
+    // Mettre à jour le statut du livreur
+    await User.findByIdAndUpdate(delivererId, { status: 'online' });
+
+    res.status(200).json({ success: true, message: 'Session reprise', session: session });
+  } catch (error) {
+    console.error('Error in resumeSession:', error);
     res.status(500).json({ message: 'Erreur serveur', error: error.message });
   }
 };

@@ -453,6 +453,8 @@ exports.createOrder = async (req, res) => {
     const orderData = {
       client,
       providers: providersToProcess, // COMMENT 2: Multiple providers
+      // Ajouter provider (singulier) pour compatibilité avec le système de grouping
+      ...(providersToProcess.length === 1 && { provider: providersToProcess[0] }),
       items: formattedItems,
       providerFees: providerFees, // COMMENT 2: Per-provider fee breakdown
       deliveryAddress,
@@ -522,8 +524,16 @@ exports.createOrder = async (req, res) => {
     // Populate order with necessary data for notifications
     const populatedOrder = await Order.findById(createdOrder._id)
       .populate('client', 'firstName lastName phoneNumber location')
-      .populate('providers', 'name type phone address');
-
+      .populate('providers', 'name type phone address')
+      .populate('provider', 'name type phone address location'); // Ajouter provider singulier
+    
+    // S'assurer que provider est disponible pour la notification (prendre le premier si plusieurs)
+    const providerForNotification = populatedOrder.providers && populatedOrder.providers.length > 0 
+      ? populatedOrder.providers[0] 
+      : null;
+    
+    console.log('🎯 Provider for notification:', providerForNotification);
+    
     // IMMEDIATE ADMIN NOTIFICATION - Always notify admins immediately regardless of order type
     try {
       if (global.notifyAdminsImmediate) {
@@ -542,9 +552,9 @@ exports.createOrder = async (req, res) => {
       console.error('❌ Failed to send deliverer notification:', notificationError);
     }
 
-    // Schedule auto-cancellation after 10 minutes (600000ms)
+    // Schedule auto-cancellation after 20 minutes (1200000ms)
     if (global.scheduleOrderAutoCancellation) {
-      global.scheduleOrderAutoCancellation(createdOrder._id.toString(), 600000);
+      global.scheduleOrderAutoCancellation(createdOrder._id.toString(), 1200000);
     }
 
     res.status(201).json({

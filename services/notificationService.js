@@ -92,11 +92,16 @@ export async function notifyNewOrder(order) {
       phone: order.client.phoneNumber,
       location: order.client.location
     },
-    provider: {
-      name: order.provider.name,
-      type: order.provider.type,
-      phone: order.provider.phone,
-      address: order.provider.address
+    provider: order.providerForNotification ? {
+      name: order.providerForNotification.name,
+      type: order.providerForNotification.type,
+      phone: order.providerForNotification.phone,
+      address: order.providerForNotification.address
+    } : {
+      name: 'Unknown Provider',
+      type: 'unknown',
+      phone: '',
+      address: ''
     },
     items: order.items.map(item => ({
       name: item.name,
