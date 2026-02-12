@@ -19,6 +19,7 @@ const {
   getProviderOrders,
   updateProviderOrderStatus,
   getProviderOrderStats,
+  acceptOrder,
 } = require('../controllers/providerController');
 
 // Routes protégées pour les prestataires connectés (DOIVENT VENIR EN PREMIER)
@@ -45,6 +46,9 @@ router.get('/me/orders/stats', isProvider, getProviderOrderStats);
 
 // PUT /api/providers/me/orders/:orderId/status - Mettre à jour le statut
 router.put('/me/orders/:orderId/status', isProvider, updateProviderOrderStatus);
+
+// PUT /api/providers/me/orders/:orderId/accept - Accepter une commande
+router.put('/me/orders/:orderId/accept', isProvider, acceptOrder);
 
 // Routes publiques pour les prestataires et produits
 router.get('/', getProviders);

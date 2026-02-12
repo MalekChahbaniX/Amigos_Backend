@@ -1,7 +1,21 @@
 const User = require('../models/User');
 const Session = require('../models/Session');
 const Order = require('../models/Order');
+const City = require('../models/City');
 const { generateUniqueSecurityCode } = require('../utils/securityCodeGenerator');
+
+// Helper function to get admin city name
+const getAdminCityName = async (adminUser) => {
+  if (!adminUser.city) return null;
+  
+  try {
+    const city = await City.findById(adminUser.city);
+    return city ? city.name : null;
+  } catch (error) {
+    console.error('Error fetching city:', error);
+    return null;
+  }
+};
 
 /**
  * Normalise un numéro de téléphone tunisien
@@ -46,6 +60,9 @@ exports.getDeliverers = async (req, res) => {
   try {
     const { search = '', page = 1, limit = 10 } = req.query;
 
+    console.log('🔍 [DEBUG] getDeliverers called by:', req.user.role, 'with city:', req.user.city);
+    console.log('🔍 [DEBUG] Search params:', { search, page, limit });
+
     // Build search query
     const searchQuery = {};
     if (search) {
@@ -65,14 +82,25 @@ exports.getDeliverers = async (req, res) => {
       if (!req.user.city) {
         return res.status(403).json({ message: 'Admin sans ville assignée' });
       }
-      searchQuery.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      console.log('🔍 [DEBUG] Admin city name resolved to:', adminCityName);
+      if (adminCityName) {
+        searchQuery['location.city'] = adminCityName;
+      }
     }
 
+    console.log('🔍 [DEBUG] Final search query:', JSON.stringify(searchQuery, null, 2));
+
+    // First, let's check what deliverers exist in total
+    const allDeliverers = await User.find({ role: 'deliverer' }).select('firstName lastName location.city');
+    console.log('🔍 [DEBUG] All deliverers in DB:', allDeliverers.map(d => ({ name: d.firstName + ' ' + d.lastName, city: d.location?.city })));
+
     const totalDeliverers = await User.countDocuments(searchQuery);
+    console.log('🔍 [DEBUG] Total deliverers matching query:', totalDeliverers);
 
     // Get deliverers with pagination
     const deliverers = await User.find(searchQuery)
-      .select('firstName lastName phoneNumber status createdAt securityCode')
+      .select('firstName lastName phoneNumber status createdAt securityCode location')
       .sort({ createdAt: -1 })
       .limit(limit * 1)
       .skip((page - 1) * limit);
@@ -89,7 +117,7 @@ exports.getDeliverers = async (req, res) => {
       totalSolde: 0, // TODO: Calculate sum of platformSolde from delivered orders
       rating: 4.5, // TODO: Calculate from order ratings when implemented
       isActive: deliverer.status === 'active',
-      location: 'Centre Ville' // TODO: Add location field to User model when needed
+      location: deliverer.location?.address || deliverer.location?.city || 'Centre Ville'
     }));
 
     // Add cache-busting headers
@@ -122,7 +150,10 @@ exports.getDelivererById = async (req, res) => {
     const query = { _id: req.params.id, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.findOne(query).select('firstName lastName phoneNumber status createdAt location securityCode');
@@ -220,7 +251,10 @@ exports.createDeliverer = async (req, res) => {
     // If creator is an admin, associate deliverer to the same city
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      newDelivererData.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        newDelivererData['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.create(newDelivererData);
@@ -270,7 +304,10 @@ exports.updateDelivererStatus = async (req, res) => {
     const query = { _id: req.params.id, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.findOneAndUpdate(query, { status }, { new: true });
@@ -304,7 +341,10 @@ exports.deleteDeliverer = async (req, res) => {
     const query = { _id: req.params.id, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.findOneAndDelete(query);
@@ -347,7 +387,9 @@ exports.regenerateSecurityCode = async (req, res) => {
 
     // If admin (not superAdmin), verify the deliverer belongs to the admin's city
     if (adminRole === 'admin') {
-      if (!deliverer.city || deliverer.city.toString() !== req.user.city?.toString()) {
+      const adminCityName = await getAdminCityName(req.user);
+      const delivererCityName = deliverer.location?.city;
+      if (!delivererCityName || delivererCityName !== adminCityName) {
         return res.status(403).json({ message: 'Accès non autorisé à ce livreur' });
       }
     }
@@ -406,13 +448,27 @@ exports.getDelivererSessions = async (req, res) => {
       if (!req.user.city) {
         return res.status(403).json({ message: 'Admin sans ville assignée' });
       }
-      // Find deliverers in the admin's city
-      const delivererIds = await User.find({
-        role: 'deliverer',
-        city: req.user.city
-      }).select('_id');
-      
-      if (delivererIds.length === 0) {
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        // Find deliverers in the admin's city
+        const delivererIds = await User.find({
+          role: 'deliverer',
+          'location.city': adminCityName
+        }).select('_id');
+        
+        if (delivererIds.length === 0) {
+          return res.status(200).json({
+            sessions: [],
+            total: 0,
+            page: parseInt(page),
+            limit: parseInt(limit),
+            totalPages: 0
+          });
+        }
+        
+        query.deliverer = { $in: delivererIds.map(d => d._id) };
+      } else {
+        // If no city name found, return empty
         return res.status(200).json({
           sessions: [],
           total: 0,
@@ -421,8 +477,6 @@ exports.getDelivererSessions = async (req, res) => {
           totalPages: 0
         });
       }
-      
-      query.deliverer = { $in: delivererIds.map(d => d._id) };
     }
     
     // Get total count
@@ -476,7 +530,10 @@ exports.getDelivererEarnings = async (req, res) => {
     const query = { _id: delivererId, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.findOne(query);
@@ -532,7 +589,10 @@ exports.getDelivererBalance = async (req, res) => {
     const query = { _id: delivererId, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
     
     // Fetch deliverer with dailyBalance populated
@@ -602,7 +662,10 @@ exports.getDelivererStats = async (req, res) => {
     const query = { _id: delivererId, role: 'deliverer' };
     if (req.user && req.user.role === 'admin') {
       if (!req.user.city) return res.status(403).json({ message: 'Admin sans ville assignée' });
-      query.city = req.user.city;
+      const adminCityName = await getAdminCityName(req.user);
+      if (adminCityName) {
+        query['location.city'] = adminCityName;
+      }
     }
 
     const deliverer = await User.findOne(query);

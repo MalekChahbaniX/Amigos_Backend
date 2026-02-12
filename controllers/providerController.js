@@ -571,7 +571,55 @@ exports.getProviderOrders = async (req, res) => {
   }
 };
 
-// @desc    Update order status to preparing (Réaliser)
+// @desc    Accept or reject an order (NEW FUNCTIONALITY)
+// @route   PUT /api/providers/me/orders/:orderId/accept
+// @access  Private (provider)
+exports.acceptOrder = async (req, res) => {
+  try {
+    const Order = require('../models/Order');
+    const providerId = req.user._id || req.user.providerId;
+    const { orderId } = req.params;
+    
+    const order = await Order.findOne({ 
+      _id: orderId,
+      $or: [
+        { provider: providerId },
+        { providers: providerId }
+      ]
+    });
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Commande non trouvée' });
+    }
+    
+    if (order.status !== 'pending') {
+      return res.status(400).json({ 
+        message: 'Seules les commandes en attente peuvent être acceptées',
+        currentStatus: order.status
+      });
+    }
+    
+    // Utiliser le service de timer pour accepter
+    const providerTimerService = require('../services/providerOrderTimer');
+    const updatedOrder = await providerTimerService.acceptOrder(orderId, providerId);
+    
+    res.json({
+      success: true,
+      message: 'Commande acceptée avec succès',
+      order: {
+        id: updatedOrder._id,
+        status: updatedOrder.status,
+        orderNumber: updatedOrder.orderNumber || `#${updatedOrder._id.toString().slice(-6)}`,
+        acceptedAt: updatedOrder.providerAcceptedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error in acceptOrder:', error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// @desc    Update order status to preparing (Réaliser) - MODIFIED
 // @route   PUT /api/providers/me/orders/:orderId/status
 // @access  Private (provider)
 exports.updateProviderOrderStatus = async (req, res) => {
@@ -590,7 +638,10 @@ exports.updateProviderOrderStatus = async (req, res) => {
     
     const order = await Order.findOne({ 
       _id: orderId, 
-      provider: providerId 
+      $or: [
+        { provider: providerId },
+        { providers: providerId }
+      ]
     });
     
     if (!order) {
@@ -598,9 +649,9 @@ exports.updateProviderOrderStatus = async (req, res) => {
     }
     
     // Validate status transition
-    if (status === 'preparing' && order.status !== 'pending') {
+    if (status === 'preparing' && !['pending', 'accepted'].includes(order.status)) {
       return res.status(400).json({ 
-        message: 'Seules les commandes en attente peuvent être mises en préparation' 
+        message: 'Seules les commandes en attente ou acceptées peuvent être mises en préparation' 
       });
     }
     
@@ -608,6 +659,13 @@ exports.updateProviderOrderStatus = async (req, res) => {
       return res.status(400).json({ 
         message: 'Cette commande ne peut plus être annulée' 
       });
+    }
+    
+    // Annuler le timer si la commande est annulée
+    if (status === 'cancelled') {
+      const providerTimerService = require('../services/providerOrderTimer');
+      providerTimerService.cancelProviderTimer(orderId);
+      console.log(`⏹️ [Provider] Timer annulé pour commande ${orderId} (annulation prestataire)`);
     }
     
     order.status = status;

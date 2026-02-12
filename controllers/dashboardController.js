@@ -1,6 +1,20 @@
 const User = require('../models/User');
 const Order = require('../models/Order');
 const Provider = require('../models/Provider');
+const City = require('../models/City');
+
+// Helper function to get admin city name
+const getAdminCityName = async (adminUser) => {
+  if (!adminUser.city) return null;
+  
+  try {
+    const city = await City.findById(adminUser.city);
+    return city ? city.name : null;
+  } catch (error) {
+    console.error('Error fetching city:', error);
+    return null;
+  }
+};
 
 // @desc    Get dashboard statistics
 // @route   GET /api/dashboard/stats
@@ -12,32 +26,28 @@ exports.getDashboardStats = async (req, res) => {
     const startOfDay = new Date(today.setHours(0, 0, 0, 0));
     const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
-    // Build match stage based on user role
-    let matchStage = {
-      createdAt: { $gte: startOfDay, $lte: endOfDay }
-    };
-
-    // If admin, filter by their city
+    // Get admin city name if user is admin
+    let adminCityName = null;
     if (req.user.role === 'admin' && req.user.city) {
-      matchStage.city = req.user.city;
+      adminCityName = await getAdminCityName(req.user);
     }
 
     // Get counts for today
     const todayOrders = await Order.countDocuments({
       createdAt: { $gte: startOfDay, $lte: endOfDay },
-      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
+      ...(adminCityName ? { city: adminCityName } : {})
     });
 
     const activeClients = await User.countDocuments({
       role: 'client',
       status: 'active',
-      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
+      ...(adminCityName ? { 'location.city': adminCityName } : {})
     });
 
     const activeDeliverers = await User.countDocuments({
       role: 'deliverer',
       status: 'active',
-      ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
+      ...(adminCityName ? { 'location.city': adminCityName } : {})
     });
 
     // Calculate today's revenue (sum of client-paid amounts)
@@ -46,7 +56,7 @@ exports.getDashboardStats = async (req, res) => {
         $match: {
           createdAt: { $gte: startOfDay, $lte: endOfDay },
           status: { $in: ['delivered', 'completed'] },
-          ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
+          ...(adminCityName ? { city: adminCityName } : {})
         }
       },
       {
@@ -63,7 +73,7 @@ exports.getDashboardStats = async (req, res) => {
         $match: {
           createdAt: { $gte: startOfDay, $lte: endOfDay },
           status: { $in: ['delivered', 'completed'] },
-          ...(req.user.role === 'admin' && req.user.city ? { city: req.user.city } : {})
+          ...(adminCityName ? { city: adminCityName } : {})
         }
       },
       {
@@ -356,11 +366,17 @@ exports.getDelivererOrders = async (req, res) => {
 // @access  Private (Admin or Super Admin)
 exports.getRecentOrders = async (req, res) => {
   try {
+    // Get admin city name if user is admin
+    let adminCityName = null;
+    if (req.user.role === 'admin' && req.user.city) {
+      adminCityName = await getAdminCityName(req.user);
+    }
+
     let query = {};
     
     // If admin, filter by their city
-    if (req.user.role === 'admin' && req.user.city) {
-      query.city = req.user.city;
+    if (adminCityName) {
+      query.city = adminCityName;
     }
 
     const recentOrders = await Order.find(query)
@@ -599,17 +615,17 @@ exports.assignDeliverer = async (req, res) => {
 // @access  Private (Admin or Super Admin)
 exports.getActiveDeliverers = async (req, res) => {
   try {
-    let query = {
-      role: 'deliverer',
-      status: 'active'
-    };
-
-    // If admin, filter by their city
+    // Get admin city name if user is admin
+    let adminCityName = null;
     if (req.user.role === 'admin' && req.user.city) {
-      query.city = req.user.city;
+      adminCityName = await getAdminCityName(req.user);
     }
 
-    const activeDeliverers = await User.find(query).select('firstName lastName phoneNumber location');
+    const activeDeliverers = await User.find({
+      role: 'deliverer',
+      status: 'active',
+      ...(adminCityName ? { 'location.city': adminCityName } : {})
+    }).select('firstName lastName phoneNumber location');
 
     const formattedDeliverers = activeDeliverers.map(deliverer => ({
       id: deliverer._id,

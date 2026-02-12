@@ -186,6 +186,12 @@ const productSchema = new mongoose.Schema(
       default: false,
     },
     
+    // ROOM 15 Minutes - Pour produits chauds/frais nécessitant préparation rapide
+    isRoomProduct: {
+      type: Boolean,
+      default: false,
+    },
+    
     availability: {
       type: Boolean,
       default: true,
@@ -282,6 +288,7 @@ productSchema.index({ provider: 1 });
 productSchema.index({ unitType: 1 });
 productSchema.index({ sku: 1 });
 productSchema.index({ requiresPrescription: 1 });
+productSchema.index({ isRoomProduct: 1 });
 productSchema.index({ 'variants.sku': 1 });
 
 const Product = mongoose.model('Product', productSchema);

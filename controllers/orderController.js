@@ -238,11 +238,22 @@ exports.createOrder = async (req, res) => {
 
     const providerMap = new Map(providersData.map(p => [p._id.toString(), p]));
 
-    // 2. Charger les produits
+    // 2. Charger les produits et détecter les produits ROOM
     console.log('🛒 Loading products for pricing...');
     const productIds = items.map(item => item.product || item.productId).filter(Boolean);
     const products = await Product.find({ _id: { $in: productIds } });
     const productMap = new Map(products.map(p => [p._id.toString(), p]));
+    
+    // ROOM 15 Minutes: Détecter si la commande contient des produits ROOM
+    let hasRoomProduct = false;
+    for (const item of items) {
+      const product = productMap.get(item.product?.toString() || item.productId?.toString());
+      if (product && product.isRoomProduct) {
+        hasRoomProduct = true;
+        console.log('🔥 ROOM product detected:', product.name);
+        break;
+      }
+    }
 
     // 3. Group items by providerId (COMMENT 2)
     console.log('🔀 Grouping items by providerId...');
@@ -499,6 +510,15 @@ exports.createOrder = async (req, res) => {
     const protectionEndTime = new Date(Date.now() + protectionDurationMs);
     orderData.protectionEnd = protectionEndTime;
 
+    // ROOM 15 Minutes: Configurer le timer pour les commandes ROOM
+    if (hasRoomProduct) {
+      const roomDurationMs = 15 * 60 * 1000; // 15 minutes
+      const roomEndTime = new Date(Date.now() + roomDurationMs);
+      orderData.isRoomOrder = true;
+      orderData.roomEnd = roomEndTime;
+      console.log('🔥 ROOM 15 minutes timer activated - ends at:', roomEndTime);
+    }
+
     // Normalize urgent flag from possible client representations
     const urgentFlag = req.body.urgent === true || req.body.urgent === 'true' || req.body.urgent === 1 || req.body.urgent === '1';
     const isUrgent = req.body.orderType === 'A4' || urgentFlag;
@@ -520,6 +540,16 @@ exports.createOrder = async (req, res) => {
       console.log('📦 Creating non-urgent order (A1) - immediately available and eligible for grouping');
     }
     const createdOrder = await Order.create(orderData);
+
+    // ROOM 15 Minutes: Programmer le timer si c'est une commande ROOM
+    if (hasRoomProduct && createdOrder.roomEnd) {
+      const roomTimerService = require('../services/roomTimerService');
+      roomTimerService.scheduleRoomTimer(createdOrder._id, createdOrder.roomEnd);
+    }
+
+    // Démarrer le timer de 5 minutes pour l'acceptation par prestataire
+    const providerTimerService = require('../services/providerOrderTimer');
+    await providerTimerService.startProviderTimer(createdOrder._id, createdOrder.createdAt);
 
     // Populate order with necessary data for notifications
     const populatedOrder = await Order.findById(createdOrder._id)
@@ -544,13 +574,9 @@ exports.createOrder = async (req, res) => {
       console.error('❌ Failed to send immediate admin notification:', adminNotificationError);
     }
 
-    // Notify deliverers about new order immediately (both urgent and non-urgent)
-    try {
-      await global.notifyNewOrder(populatedOrder);
-      console.log('📢 Immediate notification sent to deliverers for order', populatedOrder._id);
-    } catch (notificationError) {
-      console.error('❌ Failed to send deliverer notification:', notificationError);
-    }
+    // NE PLUS NOTIFIER LES LIVREURS IMMÉDIATEMENT
+    // Les livreurs seront notifiés après 5 minutes ou quand le prestataire accepte
+    console.log('⏳ [ORDER] Livreurs seront notifiés après 5 minutes ou acceptation prestataire');
 
     // Schedule auto-cancellation after 20 minutes (1200000ms)
     if (global.scheduleOrderAutoCancellation) {

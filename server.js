@@ -8,6 +8,9 @@ const http = require('http');
 // Initialize order grouping scheduler
 const { startGroupingScheduler, stopGroupingScheduler } = require('./services/orderGroupingScheduler');
 
+// Initialize ROOM timer service
+const roomTimerService = require('./services/roomTimerService');
+
 // Charger les variables d'environnement
 dotenv.config();
 
@@ -548,6 +551,15 @@ const PORT = process.env.PORT || 5000;
         console.error('❌ Error starting order grouping scheduler:', schedulerError.message);
         // Le serveur continue à fonctionner même si le scheduler échoue
       }
+      
+      // Démarrer le service ROOM timer
+      try {
+        roomTimerService.start();
+        console.log('🔥 ROOM timer service started successfully');
+      } catch (roomError) {
+        console.error('❌ Error starting ROOM timer service:', roomError.message);
+        // Le serveur continue à fonctionner même si le service ROOM échoue
+      }
     });
   } catch (initError) {
     console.error('❌ Fatal error during server initialization:', initError.message);
@@ -559,6 +571,7 @@ const PORT = process.env.PORT || 5000;
 process.on('SIGTERM', async () => {
   console.log('⏸️ SIGTERM signal received: closing HTTP server');
   stopGroupingScheduler();
+  roomTimerService.stop();
   
   // Clear all pending auto-cancellation timers
   if (global.orderCancellationTimers) {
@@ -581,6 +594,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('⏸️ SIGINT signal received: closing HTTP server');
   stopGroupingScheduler();
+  roomTimerService.stop();
   
   // Clear all pending auto-cancellation timers
   if (global.orderCancellationTimers) {

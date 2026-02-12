@@ -195,18 +195,12 @@ class WinSMSService {
     }
 
     try {
-      // Use balance/status endpoint instead of SMS send endpoint to avoid sending test SMS
-      // This endpoint validates credentials without consuming SMS credits
-      const balanceUrl = this.apiUrl.replace('/sms/send', '/account/balance') || 
-                         'https://api.winsms.tn/v1/account/balance';
+      // Use balance endpoint to test connection
+      const testUrl = `${this.apiUrl}?action=balance&api_key=${this.apiKey}`;
       
       const response = await axios.get(
-        balanceUrl,
+        testUrl,
         {
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          },
           timeout: 15000,
           httpsAgent: new (require('https').Agent)({
             rejectUnauthorized: false // Désactiver la validation SSL temporairement
@@ -240,18 +234,15 @@ class WinSMSService {
       try {
         const startTime = Date.now();
 
-        const response = await axios.post(
-          this.apiUrl,
+        // Format phone number (remove + prefix for WinSMS API)
+        const formattedPhone = phoneNumber.replace('+', '');
+        
+        // Build URL with parameters for WinSMS API
+        const smsUrl = `${this.apiUrl}?action=send-sms&api_key=${this.apiKey}&to=${formattedPhone}&from=${this.senderId}&sms=${encodeURIComponent(message)}`;
+
+        const response = await axios.get(
+          smsUrl,
           {
-            to: phoneNumber,
-            text: message,
-            sender: this.senderId
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json'
-            },
             timeout: 20000,
             httpsAgent: new (require('https').Agent)({
               rejectUnauthorized: false // Désactiver la validation SSL temporairement
@@ -263,7 +254,7 @@ class WinSMSService {
 
         return {
           success: true,
-          messageId: response.data?.messageId || response.data?.id || response.data?.reference,
+          messageId: response.data?.message_id || response.data?.id || 'sent',
           status: response.data?.status || 'sent',
           attempts: attempt,
           responseTime

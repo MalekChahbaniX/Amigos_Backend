@@ -57,6 +57,7 @@ exports.getDelivererOrders = async (req, res) => {
       finalAmount: order.finalAmount,
       createdAt: order.createdAt,
       platformSolde: order.platformSolde,
+      restaurantPayout: order.restaurantPayout || order.p1Total || 0, // Add deliverer payout
     }));
     
     res.json({
@@ -1336,6 +1337,12 @@ exports.getDelivererStatistics = async (req, res) => {
   try {
     const delivererId = req.user.id;
 
+    const isDevelopment = process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production';
+    
+    if (isDevelopment) {
+      console.log('📊 Getting statistics for deliverer:', delivererId);
+    }
+
     const deliverer = await User.findById(delivererId);
     if (!deliverer) {
       return res.status(404).json({ success: false, message: 'Livreur non trouvé' });
@@ -1345,12 +1352,21 @@ exports.getDelivererStatistics = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    if (isDevelopment) {
+      console.log('📊 Today date:', today.toISOString());
+      console.log('📊 Deliverer dailyBalance:', deliverer.dailyBalance);
+    }
+
     // Find today's balance entry
     const todayBalance = deliverer.dailyBalance?.find(db => {
       const d = new Date(db.date);
       d.setHours(0, 0, 0, 0);
       return d.getTime() === today.getTime();
     });
+
+    if (isDevelopment) {
+      console.log('📊 Today balance entry:', todayBalance);
+    }
 
     // Get all delivered orders for this deliverer
     const allDeliveredOrders = await Order.find({
@@ -1372,6 +1388,12 @@ exports.getDelivererStatistics = async (req, res) => {
       createdAt: { $gte: today }
     });
 
+    if (isDevelopment) {
+      console.log('📊 All delivered orders:', allDeliveredOrders.length);
+      console.log('📊 Today delivered orders:', todayDeliveredOrders.length);
+      console.log('📊 Today cancelled orders:', todayCancelledOrders.length);
+    }
+
     // Count by status
     const totalDelivered = allDeliveredOrders.length;
     const totalCancelled = (await Order.countDocuments({
@@ -1388,35 +1410,41 @@ exports.getDelivererStatistics = async (req, res) => {
     const totalSoldeAmigos = (deliverer.dailyBalance || []).reduce((sum, db) => sum + (db.soldeAmigos || 0), 0);
     const totalSoldeAnnulation = (deliverer.dailyBalance || []).reduce((sum, db) => sum + (db.soldeAnnulation || 0), 0);
 
+    const statistics = {
+      // Badge #1: Amigos CASH (today's soldeAmigos)
+      amigosCashToday: Number(soldeAmigosTodayAmount.toFixed(3)),
+      
+      // Badge #2: Vos CASH (cash collected = soldeAmigos - annulation)
+      yourCashToday: Number(cashCollectedToday.toFixed(3)),
+      
+      // Badge #3: Commandes réalisées (today)
+      ordersCompletedToday: todayDeliveredOrders.length,
+      
+      // Badge #4: Commandes refusées (today) - can be orders rejected or cancelled
+      ordersRejectedToday: todayCancelledOrders.length,
+      
+      // Badge #5: Solde annulation (today)
+      cancellationSoldeToday: Number(soldeAnnulationTodayAmount.toFixed(3)),
+      
+      // Badge #6: Total livreur stats
+      totalDelivered,
+      totalCancelled,
+      totalSoldeAmigos: Number(totalSoldeAmigos.toFixed(3)),
+      totalCancellationSolde: Number(totalSoldeAnnulation.toFixed(3)),
+      
+      // Additional info
+      todayDate: today.toISOString(),
+      delivererName: `${deliverer.firstName} ${deliverer.lastName}`,
+      currency: 'DT'
+    };
+
+    if (isDevelopment) {
+      console.log('📊 Final statistics:', statistics);
+    }
+
     res.json({
       success: true,
-      statistics: {
-        // Badge #1: Amigos CASH (today's soldeAmigos)
-        amigosCashToday: Number(soldeAmigosTodayAmount.toFixed(3)),
-        
-        // Badge #2: Vos CASH (cash collected = soldeAmigos - annulation)
-        yourCashToday: Number(cashCollectedToday.toFixed(3)),
-        
-        // Badge #3: Commandes réalisées (today)
-        ordersCompletedToday: todayDeliveredOrders.length,
-        
-        // Badge #4: Commandes refusées (today) - can be orders rejected or cancelled
-        ordersRejectedToday: todayCancelledOrders.length,
-        
-        // Badge #5: Solde annulation (today)
-        cancellationSoldeToday: Number(soldeAnnulationTodayAmount.toFixed(3)),
-        
-        // Badge #6: Total livreur stats
-        totalDelivered,
-        totalCancelled,
-        totalSoldeAmigos: Number(totalSoldeAmigos.toFixed(3)),
-        totalCancellationSolde: Number(totalSoldeAnnulation.toFixed(3)),
-        
-        // Additional info
-        todayDate: today.toISOString(),
-        delivererName: `${deliverer.firstName} ${deliverer.lastName}`,
-        currency: 'DT'
-      }
+      statistics
     });
   } catch (error) {
     console.error('Error in getDelivererStatistics:', error);

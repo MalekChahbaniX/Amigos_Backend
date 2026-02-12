@@ -1,6 +1,15 @@
 const WinSMSService = require('./winSmsService');
-const winSmsService = new WinSMSService();
 const OTPService = require('./otpService');
+
+let winSmsService = null;
+
+// Lazy initialization of WinSMS service
+function getWinSmsService() {
+  if (!winSmsService) {
+    winSmsService = new WinSMSService();
+  }
+  return winSmsService;
+}
 
 class SMSRouterService {
   constructor() {
@@ -86,7 +95,8 @@ class SMSRouterService {
    */
   async _routeToWinSMS(phoneNumber, otp, startTime) {
     try {
-      const result = await winSmsService.sendOTP(phoneNumber, otp);
+      const service = getWinSmsService();
+      const result = await service.sendOTP(phoneNumber, otp);
       const responseTime = Date.now() - startTime;
 
       // Normalize response format
@@ -164,7 +174,8 @@ class SMSRouterService {
 
     // Test WinSMS
     try {
-      const winSmsTest = await winSmsService.testConnection();
+      const service = getWinSmsService();
+      const winSmsTest = await service.testConnection();
       results.winsms = {
         status: winSmsTest.success ? 'connected' : 'failed',
         error: winSmsTest.error,

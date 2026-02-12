@@ -122,6 +122,15 @@ const orderSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'preparing', 'collected', 'in_delivery', 'delivered', 'cancelled'],
     default: 'pending',
   },
+  // Provider response tracking
+  providerAcceptedAt: {
+    type: Date,
+    default: null,
+  },
+  providerTimeoutAt: {
+    type: Date,
+    default: null,
+  },
   // CANCELLATION FIELDS
   cancellationType: {
     type: String,
@@ -271,6 +280,16 @@ const orderSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // ROOM 15 Minutes: For hot/fresh products requiring quick preparation
+  // roomEnd = createdAt + 15 minutes (900000ms)
+  isRoomOrder: {
+    type: Boolean,
+    default: false,
+  },
+  roomEnd: {
+    type: Date,
+    default: null,
+  },
   // PRESCRIPTION RELATED FIELDS
   prescription: {
     type: {
@@ -327,6 +346,7 @@ orderSchema.index({ providers: 1 });
 orderSchema.index({ status: 1, protectionEnd: 1 });
 orderSchema.index({ isUrgent: 1, protectionEnd: 1 });
 orderSchema.index({ 'prescription.type': 1 });
+orderSchema.index({ isRoomOrder: 1, roomEnd: 1 });
 
 
 module.exports = Order;
