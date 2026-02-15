@@ -95,7 +95,7 @@ exports.getProfile = async (req, res) => {
 // @access Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { firstName, lastName, email, phoneNumber, avatar, securityCode } = req.body;
+    const { firstName, lastName, email, phoneNumber, avatar, securityCode, termsAccepted } = req.body;
     const userId = req.user?.id || req.body.userId;
 
     if (!userId) {
@@ -126,14 +126,15 @@ exports.updateProfile = async (req, res) => {
       }
     }
 
+    // Get user to check role
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
+
     // Validation du code de sécurité pour les clients
     if (securityCode !== undefined) {
-      const user = await User.findById(userId);
-      
-      if (!user) {
-        return res.status(404).json({ message: 'Utilisateur non trouvé' });
-      }
-
       // Vérifier que c'est un client
       if (user.role !== 'client') {
         return res.status(400).json({ 
@@ -169,7 +170,16 @@ exports.updateProfile = async (req, res) => {
       }
     }
 
-    const user = await User.findByIdAndUpdate(
+    // Validation du termsAccepted pour les clients
+    if (termsAccepted !== undefined && user.role === 'client') {
+      if (typeof termsAccepted !== 'boolean') {
+        return res.status(400).json({ 
+          message: 'termsAccepted doit être un booléen' 
+        });
+      }
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
         ...(firstName && { firstName }),
@@ -177,25 +187,27 @@ exports.updateProfile = async (req, res) => {
         ...(avatar !== undefined && { avatar }),
         ...(email && { email: email.toLowerCase() }),
         ...(phoneNumber && { phoneNumber }),
-        ...(securityCode !== undefined && { securityCode })
+        ...(securityCode !== undefined && { securityCode }),
+        ...(termsAccepted !== undefined && user.role === 'client' && { termsAccepted })
       },
       { new: true, runValidators: true }
-    ).select('firstName lastName avatar email phoneNumber role status');
+    ).select('firstName lastName avatar email phoneNumber role status termsAccepted');
 
-    if (!user) {
+    if (!updatedUser) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
 
     res.status(200).json({
       message: 'Profil mis à jour avec succès',
       profile: {
-        firstName: user.firstName,
-        lastName: user.lastName,
-        avatar: user.avatar,
-        email: user.email,
-        phoneNumber: user.phoneNumber,
-        role: user.role,
-        status: user.status
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        avatar: updatedUser.avatar,
+        email: updatedUser.email,
+        phoneNumber: updatedUser.phoneNumber,
+        role: updatedUser.role,
+        status: updatedUser.status,
+        termsAccepted: updatedUser.termsAccepted
       }
     });
   } catch (error) {

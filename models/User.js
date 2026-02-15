@@ -181,6 +181,14 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null,
   },
+  // Terms acceptance tracking (for clients only)
+  termsAccepted: {
+    type: Boolean,
+    default: false,
+    required: function() {
+      return this.role === 'client';
+    }
+  },
   createdAt: {
     type: Date,
     default: Date.now
