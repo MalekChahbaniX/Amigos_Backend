@@ -496,6 +496,9 @@ const productOptionRoutes = require('./routes/productOptionRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+// NOUVEAUX: Routes pour marges et frais additionnels
+const marginSettingsRoutes = require('./routes/marginSettingsRoutes');
+const additionalFeesRoutes = require('./routes/additionalFeesRoutes');
 
 app.use('/api/app-settings', appSettingRoutes);
 app.use('/api/promos', promoRoutes);
@@ -519,6 +522,26 @@ app.use('/api/option-groups', optionGroupRoutes);
 app.use('/api/product-options', productOptionRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/upload', uploadRoutes);
+// NOUVEAUX: Routes pour marges et frais additionnels
+app.use('/api/margin-settings', marginSettingsRoutes);
+app.use('/api/additional-fees', additionalFeesRoutes);
+
+// Middleware d'erreur global pour transformer toutes les erreurs en JSON
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err);
+  
+  // Si l'erreur est une réponse HTML (404, 500, etc.)
+  if (res.headersSent) {
+    return next(err);
+  }
+  
+  // Toujours retourner du JSON pour les erreurs API
+  res.status(500).json({
+    success: false,
+    message: err.message || 'Erreur serveur interne',
+    error: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
 
 // Route de base pour tester que le serveur fonctionne
 app.get('/', (req, res) => {

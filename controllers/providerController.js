@@ -411,7 +411,7 @@ exports.payProviderBalance = async (req, res) => {
       return res.status(400).json({ message: 'Paramètres requis: providerId, balanceId' });
     }
 
-    if (!['especes', 'facture', 'virement'].includes(paymentMode)) {
+    if (!['especes', 'facture'].includes(paymentMode)) {
       return res.status(400).json({ message: 'Mode de paiement invalide' });
     }
 

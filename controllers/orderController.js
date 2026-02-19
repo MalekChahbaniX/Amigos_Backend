@@ -457,8 +457,25 @@ exports.createOrder = async (req, res) => {
       // Use backend calculated amount for consistency
     }
 
-    // 9. Calculate platform solde
-    const platformSolde = (p2Total - p1Total) + totalDeliveryFee + totalAppFee - promoDiscount;
+    // 9. Calculate platform solde avec logique Excel complète
+    const balanceCalc = require('../services/balanceCalculator');
+    let platformSolde = 0;
+    try {
+      const platformSoldeResult = await balanceCalc.calculatePlatformSolde({
+        clientProductsPrice: p2Total,
+        restaurantPayout: p1Total,
+        deliveryFee: totalDeliveryFee,
+        appFee: totalAppFee,
+        orderType: 'A1' // Sera mis à jour plus tard selon la logique
+      });
+      platformSolde = platformSoldeResult.platformSolde;
+      console.log(`💰 Platform solde calculated with Excel logic: ${platformSolde} TND`);
+      console.log(`📊 Breakdown:`, platformSoldeResult.breakdown);
+    } catch (calcErr) {
+      console.error('Erreur calcul platformSolde:', calcErr);
+      // Fallback au calcul simple
+      platformSolde = (p2Total - p1Total) + totalDeliveryFee + totalAppFee - promoDiscount;
+    }
 
     // 10. Create order with multi-provider support
     const orderData = {
@@ -815,6 +832,16 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(404).json({ message: 'Order not found' });
     }
 
+    // 🔒 SÉCURITÉ : Vérifier si un livreur est assigné pour les statuts de livraison
+    if (['in_delivery', 'delivered'].includes(status)) {
+      if (!order.deliveryDriver) {
+        return res.status(400).json({ 
+          message: 'Impossible de mettre à jour le statut : aucun livreur assigné à cette commande',
+          code: 'NO_DELIVERY_DRIVER_ASSIGNED'
+        });
+      }
+    }
+
     // PROTECTION WINDOW: Prevent cancellation during protection period (first 3 minutes)
     if (status === 'cancelled' && order.status === 'pending') {
       const now = Date.now();
@@ -837,6 +864,9 @@ exports.updateOrderStatus = async (req, res) => {
       try {
         const balanceCalc = require('../services/balanceCalculator');
         await balanceCalc.updateOrderSoldes(order);
+        
+        // 📊 LOGGING : Suivi des livraisons avec livreur
+        console.log(`✅ Order ${order._id} marked as delivered by driver ${order.deliveryDriver}`);
       } catch (calcErr) {
         console.error('Error calculating solde on status update:', calcErr);
       }

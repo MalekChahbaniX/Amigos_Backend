@@ -83,12 +83,12 @@ const providerSchema = new mongoose.Schema({
   },
   csRPercent: {
     type: Number,
-    enum: [0, 5, 10],
-    default: 5
+    // enum: [0, 5, 10],
+    default: 0
   },
   csCPercent: {
     type: Number,
-    enum: [0, 5, 10],
+    // enum: [0, 5, 10],
     default: 0
   },
   // FINANCIAL TRACKING: Daily balance for providers
@@ -111,7 +111,7 @@ const providerSchema = new mongoose.Schema({
       // Payment confirmation details
       paymentMode: {
         type: String,
-        enum: ['especes', 'facture', 'virement'],
+        enum: ['especes', 'facture'],
         default: 'especes'
       },
       // Whether this day's earnings have been paid

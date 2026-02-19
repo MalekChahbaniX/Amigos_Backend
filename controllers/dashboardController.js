@@ -87,12 +87,163 @@ exports.getDashboardStats = async (req, res) => {
     const todayRevenue = todayRevenueResult.length > 0 ? todayRevenueResult[0].total.toFixed(2) : '0.00';
     const todaySolde = todaySoldeResult.length > 0 ? todaySoldeResult[0].total.toFixed(2) : '0.00';
 
+    // Get weekly statistics (last 7 days)
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - 7);
+    weekStart.setHours(0, 0, 0, 0);
+    const lastWeekStart = new Date(weekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+
+    // Weekly orders
+    const weeklyOrdersResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: weekStart },
+          status: { $in: ['delivered', 'completed'] },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Last week orders for trend
+    const lastWeekOrdersResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: lastWeekStart, $lt: weekStart },
+          status: { $in: ['delivered', 'completed'] },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Weekly revenue
+    const weeklyRevenueResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: weekStart },
+          status: { $in: ['delivered', 'completed'] },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$clientProductsPrice' }
+        }
+      }
+    ]);
+
+    // Last week revenue for trend
+    const lastWeekRevenueResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: lastWeekStart, $lt: weekStart },
+          status: { $in: ['delivered', 'completed'] },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$clientProductsPrice' }
+        }
+      }
+    ]);
+
+    // Average delivery time for this week
+    const deliveryTimeResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: weekStart },
+          status: 'delivered',
+          deliveredAt: { $exists: true },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $project: {
+          deliveryTime: {
+            $divide: [
+              { $subtract: ['$deliveredAt', '$createdAt'] },
+              1000 * 60 // Convert to minutes
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgTime: { $avg: '$deliveryTime' }
+        }
+      }
+    ]);
+
+    // Last week average delivery time for trend
+    const lastWeekDeliveryTimeResult = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: lastWeekStart, $lt: weekStart },
+          status: 'delivered',
+          deliveredAt: { $exists: true },
+          ...(adminCityName ? { city: adminCityName } : {})
+        }
+      },
+      {
+        $project: {
+          deliveryTime: {
+            $divide: [
+              { $subtract: ['$deliveredAt', '$createdAt'] },
+              1000 * 60 // Convert to minutes
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgTime: { $avg: '$deliveryTime' }
+        }
+      }
+    ]);
+
+    // Calculate trends
+    const weeklyOrders = weeklyOrdersResult.length > 0 ? weeklyOrdersResult[0].count : 0;
+    const lastWeekOrders = lastWeekOrdersResult.length > 0 ? lastWeekOrdersResult[0].count : 0;
+    const weeklyOrdersTrend = lastWeekOrders > 0 ? Math.round(((weeklyOrders - lastWeekOrders) / lastWeekOrders) * 100) : 0;
+
+    const weeklyRevenue = weeklyRevenueResult.length > 0 ? weeklyRevenueResult[0].total : 0;
+    const lastWeekRevenue = lastWeekRevenueResult.length > 0 ? lastWeekRevenueResult[0].total : 0;
+    const weeklyRevenueTrend = lastWeekRevenue > 0 ? Math.round(((weeklyRevenue - lastWeekRevenue) / lastWeekRevenue) * 100) : 0;
+
+    const averageDeliveryTime = deliveryTimeResult.length > 0 ? Math.round(deliveryTimeResult[0].avgTime) : 0;
+    const lastWeekAverageDeliveryTime = lastWeekDeliveryTimeResult.length > 0 ? Math.round(lastWeekDeliveryTimeResult[0].avgTime) : 0;
+    const deliveryTimeTrend = lastWeekAverageDeliveryTime > 0 ? Math.round(((averageDeliveryTime - lastWeekAverageDeliveryTime) / lastWeekAverageDeliveryTime) * 100) : 0;
+
     res.status(200).json({
       todayOrders,
       activeClients,
       activeDeliverers,
       todayRevenue,
-      todaySolde
+      todaySolde,
+      // Weekly statistics
+      weeklyOrders,
+      weeklyOrdersTrend,
+      weeklyRevenue,
+      weeklyRevenueTrend,
+      averageDeliveryTime,
+      deliveryTimeTrend
     });
 
   } catch (error) {

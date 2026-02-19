@@ -14,8 +14,10 @@ const getAppSettings = async (req, res) => {
       return res.status(200).json({
         success: true,
         data: {
-          appFee: 1.0,
+          appFee: 0.0,
           currency: 'TND',
+          amigosBonusCourseAmount: 0.00,
+          amigosBonusEnabled: true,
           message: 'Paramètres par défaut utilisés'
         }
       });
@@ -41,7 +43,7 @@ const getAppSettings = async (req, res) => {
  */
 const updateAppSettings = async (req, res) => {
   try {
-    const { appFee, currency, updatedBy } = req.body;
+    const { appFee, currency, amigosBonusCourseAmount, amigosBonusEnabled, updatedBy } = req.body;
 
     // Validation des données
     if (appFee !== undefined && (isNaN(appFee) || appFee < 0)) {
@@ -58,6 +60,13 @@ const updateAppSettings = async (req, res) => {
       });
     }
 
+    if (amigosBonusCourseAmount !== undefined && (isNaN(amigosBonusCourseAmount) || amigosBonusCourseAmount < 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le bonus AMIGOS Course doit être un nombre positif'
+      });
+    }
+
     // Préparation des données de mise à jour
     const updateData = {
       updatedAt: new Date()
@@ -65,6 +74,9 @@ const updateAppSettings = async (req, res) => {
 
     if (appFee !== undefined) updateData.appFee = appFee;
     if (currency !== undefined) updateData.currency = currency;
+    if (amigosBonusCourseAmount !== undefined) updateData.amigosBonusCourseAmount = amigosBonusCourseAmount;
+    if (amigosBonusEnabled !== undefined) updateData.amigosBonusEnabled = amigosBonusEnabled;
+    
     // Ne pas inclure updatedBy si ce n'est pas fourni
     if (updatedBy !== undefined && updatedBy !== null && updatedBy !== '') {
       updateData.updatedBy = updatedBy;
@@ -116,8 +128,10 @@ const resetAppSettings = async (req, res) => {
     const { updatedBy } = req.body;
 
     const defaultSettings = {
-      appFee: 1.0,
+      appFee: 0.0,
       currency: 'TND',
+      amigosBonusCourseAmount: 0.00,
+      amigosBonusEnabled: true,
       updatedAt: new Date()
     };
 
@@ -162,7 +176,7 @@ const getAppFee = async (req, res) => {
     if (!setting) {
       return res.status(200).json({
         success: true,
-        appFee: 1.0,
+        appFee: 0.0,
         currency: 'TND'
       });
     }

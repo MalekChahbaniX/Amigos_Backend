@@ -39,7 +39,7 @@ exports.createTransfer = async (req, res) => {
       user,
       type: 'transfert',
       amount,
-      status: 'completed', // Supposons que le virement réussit.
+      status: 'completed', 
       details: { recipient, type, ...details },
     });
 

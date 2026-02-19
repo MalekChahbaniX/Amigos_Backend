@@ -202,5 +202,16 @@ module.exports = {
   isAdmin,
   isAdminOrSuperAdmin,
   isProvider,
-  checkDelivererSession
+  checkDelivererSession,
+  authorize: (...roles) => (req, res, next) => {
+    protect(req, res, () => {
+      if (!req.user || !roles.includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Accès refusé, rôle(s) requis'
+        });
+      }
+      next();
+    });
+  }
 };
