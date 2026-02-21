@@ -5,10 +5,12 @@
 // - calculateSoldeTriple(order1, order2, order3)
 // - calculateSoldeAmigos(orders, appFee)
 // - calculatePlatformSolde(order) - NOUVEAU: avec marges et frais Excel
+// - calculateAdvancedPlatformSolde(order, deliverer) - NOUVEAU: logique Zone 5 complète
 
 const MarginSettings = require('../models/MarginSettings');
 const AdditionalFees = require('../models/AdditionalFees');
 const AppSetting = require('../models/AppSetting');
+const { calculateAdvancedFees } = require('./advancedFeeCalculator');
 
 function calculateSoldeSimple(order) {
   // clientPrice - restaurantPayout
@@ -32,7 +34,50 @@ function calculateSoldeAmigos(orders, appFee) {
   return Number((sum + (appFee || 0)) || 0);
 }
 
-// NOUVEAU: Calcul du solde plateforme avec logique Excel complète
+// NOUVEAU: Calcul du solde plateforme avec logique Zone 5 complète
+async function calculateAdvancedPlatformSolde(order, deliverer) {
+  try {
+    // Utiliser le calcul avancé des frais
+    const advancedFees = await calculateAdvancedFees(order, deliverer);
+    
+    // Calculer le solde plateforme avec la nouvelle logique
+    const clientPrice = order.clientProductsPrice || order.p2Total || 0;
+    const restaurantPayout = order.restaurantPayout || order.p1Total || 0;
+    
+    // Solde avec les nouveaux frais calculés
+    const baseSolde = (clientPrice - restaurantPayout) + advancedFees.totalDeliveryFee + advancedFees.totalAppFee;
+    
+    // Obtenir le bonus AMIGOS
+    const appSettings = await AppSetting.findOne();
+    const amigosBonus = (appSettings && appSettings.amigosBonusEnabled) ? 
+      (appSettings.amigosBonusCourseAmount || 0) : 0;
+    
+    const platformSolde = baseSolde + amigosBonus;
+    
+    return {
+      platformSolde: Number(platformSolde.toFixed(3)),
+      breakdown: {
+        baseSolde: Number(baseSolde.toFixed(3)),
+        advancedFees,
+        amigosBonus: Number(amigosBonus.toFixed(3)),
+        margeNetAmigos: advancedFees.margeNetAmigos,
+        calculationMethod: 'Zone5_Advanced'
+      }
+    };
+  } catch (error) {
+    console.error('Error calculating advanced platform solde:', error);
+    // Fallback au calcul simple
+    const fallbackSolde = (order.clientProductsPrice - order.restaurantPayout) + (order.deliveryFee || 0) + (order.appFee || 0);
+    return {
+      platformSolde: Number(fallbackSolde.toFixed(3)),
+      breakdown: {
+        baseSolde: Number(fallbackSolde.toFixed(3)),
+        error: error.message,
+        calculationMethod: 'Fallback'
+      }
+    };
+  }
+}
 async function calculatePlatformSolde(order) {
   try {
     const clientPrice = order.clientProductsPrice || order.p2Total || 0;
@@ -95,13 +140,20 @@ async function calculatePlatformSolde(order) {
   }
 }
 
-async function updateOrderSoldes(order) {
+async function updateOrderSoldes(order, deliverer = null, useAdvancedCalculation = false) {
   // Do not modify other fields; compute soldes and persist
   const soldeSimple = calculateSoldeSimple(order);
   const soldeAmigos = calculateSoldeAmigos([order], order.appFee || 0);
   
-  // NOUVEAU: Calculer le solde plateforme avec logique Excel
-  const platformSoldeResult = await calculatePlatformSolde(order);
+  // Choisir la méthode de calcul
+  let platformSoldeResult;
+  if (useAdvancedCalculation && deliverer) {
+    // Utiliser la logique Zone 5 complète
+    platformSoldeResult = await calculateAdvancedPlatformSolde(order, deliverer);
+  } else {
+    // Utiliser la logique existante
+    platformSoldeResult = await calculatePlatformSolde(order);
+  }
 
   order.soldeSimple = soldeSimple;
   order.soldeAmigos = soldeAmigos;
@@ -168,6 +220,7 @@ module.exports = {
   calculateSoldeTriple,
   calculateSoldeAmigos,
   calculatePlatformSolde, // NOUVEAU
+  calculateAdvancedPlatformSolde, // NOUVEAU: logique Zone 5
   updateOrderSoldes,
   calculateSoldesByOrderType
 };

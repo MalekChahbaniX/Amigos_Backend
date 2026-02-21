@@ -7,6 +7,7 @@ const Product = require('../models/Product');
 const User = require('../models/User');
 const { calculateDistance } = require('../utils/distanceCalculator');
 const cancellationService = require('../services/cancellationService');
+const { updateOrderWithAdvancedFees } = require('../services/advancedFeeCalculator');
 // notifyNewOrder is now available globally from server.js
 
 // @desc    Calculate order fees (delivery + app fee) before confirming
@@ -461,16 +462,38 @@ exports.createOrder = async (req, res) => {
     const balanceCalc = require('../services/balanceCalculator');
     let platformSolde = 0;
     try {
-      const platformSoldeResult = await balanceCalc.calculatePlatformSolde({
-        clientProductsPrice: p2Total,
-        restaurantPayout: p1Total,
-        deliveryFee: totalDeliveryFee,
-        appFee: totalAppFee,
-        orderType: 'A1' // Sera mis à jour plus tard selon la logique
-      });
-      platformSolde = platformSoldeResult.platformSolde;
-      console.log(`💰 Platform solde calculated with Excel logic: ${platformSolde} TND`);
-      console.log(`📊 Breakdown:`, platformSoldeResult.breakdown);
+      // Vérifier si nous devons utiliser la logique avancée (Zone 5)
+      const useAdvancedCalculation = req.body.useAdvancedCalculation === true || req.body.zoneType === 'Zone5';
+      
+      if (useAdvancedCalculation) {
+        // Utiliser la logique Zone 5 complète
+        const tempOrder = {
+          clientProductsPrice: p2Total,
+          restaurantPayout: p1Total,
+          deliveryFee: totalDeliveryFee,
+          appFee: totalAppFee,
+          totalAmount: totalAmountAfterPromo,
+          orderType: 'A1', // Sera mis à jour plus tard
+          zone: req.body.zoneId
+        };
+        
+        const platformSoldeResult = await balanceCalc.calculateAdvancedPlatformSolde(tempOrder, null);
+        platformSolde = platformSoldeResult.platformSolde;
+        console.log(`💰 Platform solde calculated with Zone 5 logic: ${platformSolde} TND`);
+        console.log(`📊 Advanced Breakdown:`, platformSoldeResult.breakdown);
+      } else {
+        // Utiliser la logique existante
+        const platformSoldeResult = await balanceCalc.calculatePlatformSolde({
+          clientProductsPrice: p2Total,
+          restaurantPayout: p1Total,
+          deliveryFee: totalDeliveryFee,
+          appFee: totalAppFee,
+          orderType: 'A1' // Sera mis à jour plus tard selon la logique
+        });
+        platformSolde = platformSoldeResult.platformSolde;
+        console.log(`💰 Platform solde calculated with standard logic: ${platformSolde} TND`);
+        console.log(`📊 Breakdown:`, platformSoldeResult.breakdown);
+      }
     } catch (calcErr) {
       console.error('Erreur calcul platformSolde:', calcErr);
       // Fallback au calcul simple
